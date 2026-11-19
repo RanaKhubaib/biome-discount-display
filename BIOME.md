@@ -334,12 +334,25 @@ values untouched; no hardcoded prices in script code; invalid
 selector degrades one place only); discount-sync 15/15 (14 existing +
 1 new defaults test; per-slot test now covers compareColor);
 production build OK. Script 45,591 bytes, SHA-256
-e1138a81… (to confirm after push). Push: GitHub commit TBD (main,
-push_files only, provenance-checked: remote head b51dd666…, diff is
-exactly the hero-toggle fix + this colour work; slot-defs.js and
-package.json byte-identical to remote, not pushed). Deploy: extension
-biome-discount-display-13 TBD (or next number if taken). CDN
-byte-check TBD. Browser verification NOT run by this subagent —
+e1138a811ce9cb6a558e43222909478a82854403d87c4def9fb328b7c9304722.
+PUSH: GitHub commit c966d67c5ce8badd9960c4cb64595e8df4b44275 on main
+(7 files, push_files only, provenance-checked: remote head was
+b51dd666…, diff is exactly the hero-toggle fix + this colour work;
+slot-defs.js and package.json byte-identical to remote, not pushed;
+all 7 files read back byte-identical). DEPLOY: extension
+biome-discount-display-13
+(https://dev.shopify.com/dashboard/140278598/apps/449145503745/versions/1248017514497).
+CDN byte-check PASSED on the first fetch (no ~2 min cache delay this
+time): pilot preview product page loads
+.../biome-discount-display-13/assets/discount-price.js (45,591 bytes),
+SHA-256 identical to local (e1138a81…); markers
+dd-subscribe-price-colors ×2, compareColor ×8, margin-right:6px ×2,
+sale default #000000 ×1, #d82c0d ×0, mode-aware staticTargetFor ×2,
+rowHasAppstleBundleBadge ×0. The rendered pilot page also carries the
+new liquid CSS (`.dd-wrap > * { margin-right: 6px; }`,
+`.dd-orig { color: #6b7280; }`) and the live settings JSON
+(`saleColor #000000`, `compareColor #6b7280`). Vercel /health 200
+after the push (auto-redeploy from main).
 parent runs it next: product page one-time row $50.97 BLACK + $59.97
 struck GRAYISH with a gap + exactly one badge (Appstle's left pill);
 Subscribe row $47.98 BLACK + $59.97 struck grayish, values unchanged;
