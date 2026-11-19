@@ -400,14 +400,80 @@
 
   function setOneTimeCompareHidden(el, hidden) {
     var container =
-      (el.closest && (el.closest("label") || el.closest(".appstle_input_wrapper"))) ||
+      (el.closest &&
+        (el.closest(".appstle_one_time_details_wrapper") ||
+          el.closest("label") ||
+          el.closest(".appstle_input_wrapper"))) ||
       el.parentNode;
     if (!container || !container.querySelectorAll) return;
+    // Mustache template compare span + WIDGET_TYPE_2 compare span
+    // (.appstle_subscription_amount_compare_at_price). Both are hidden
+    // while our rewrite is active so the theme/Appstle struck price
+    // never duplicates the one our markup already shows.
     container
-      .querySelectorAll(".appstle_onetime_amount_compare")
+      .querySelectorAll(
+        ".appstle_onetime_amount_compare, .appstle_subscription_amount_compare_at_price",
+      )
       .forEach(function (cmp) {
         cmp.style.display = hidden ? "none" : "";
       });
+  }
+
+  // Screen-reader text beside the visible one-time price. WIDGET_TYPE_2
+  // renders an sr-only amount + compare span next to the visible price;
+  // keep them in sync with the visible rewrite so the row's accessible
+  // text matches what sighted users see (and so a page-text read shows
+  // "Sale price $50.97", not the stale "Regular price $59.97").
+  // No-op when the sr-only spans do not exist (Mustache template).
+  function setWidgetSrText(el, s, o, restore) {
+    var parent = el.parentNode;
+    if (!parent || !parent.querySelector) return;
+    var amount = parent.querySelector(
+      ".appstle_subscription_amount-appstle-sr-only",
+    );
+    var compare = parent.querySelector(
+      ".appstle_subscription_amount_compare_at_price-appstle-sr-only",
+    );
+    if (restore) {
+      if (amount && el._ddWidgetSrAmountOriginal !== undefined) {
+        amount.textContent = el._ddWidgetSrAmountOriginal;
+        delete el._ddWidgetSrAmountOriginal;
+      }
+      if (compare && el._ddWidgetSrCompareOriginal !== undefined) {
+        compare.textContent = el._ddWidgetSrCompareOriginal;
+        delete el._ddWidgetSrCompareOriginal;
+      }
+      return;
+    }
+    if (amount) {
+      if (el._ddWidgetSrAmountOriginal === undefined) {
+        el._ddWidgetSrAmountOriginal = amount.textContent;
+      }
+      amount.textContent = "Sale price " + money(s);
+    }
+    if (compare) {
+      if (el._ddWidgetSrCompareOriginal === undefined) {
+        el._ddWidgetSrCompareOriginal = compare.textContent;
+      }
+      compare.textContent = "Regular price " + money(o);
+    }
+  }
+
+  // Hide/restore the theme's own struck compare-at (<s class="was">)
+  // inside a buy-box price line while the app's rewrite is active.
+  // Enzymes, Probiotics 2 and Taste 2 render their own <s class="was">
+  // in the price line; the app's .price-line .now rewrite adds a second
+  // struck original, so the line read "$47.98 $59.97 Save 20% $59.97".
+  // Hiding the theme's while ours is active leaves exactly one struck
+  // price; restoring it when the rewrite is removed keeps the theme's
+  // fallback when the app is off. Gut First, Gut Health 2, Caffeine
+  // Free, Mom Story and Routine have no .price-line, so this is a no-op
+  // there.
+  function setPriceLineWasHidden(line, hidden) {
+    if (!line || !line.querySelectorAll) return;
+    line.querySelectorAll("s.was").forEach(function (was) {
+      was.style.display = hidden ? "none" : "";
+    });
   }
 
   function applyWidgetOneTime(el, o, s, cfg, handled) {
@@ -418,6 +484,7 @@
       }
       el.removeAttribute("data-dd-widget-key");
       setOneTimeCompareHidden(el, false);
+      setWidgetSrText(el, s, o, true);
       return;
     }
     var key = o + "|" + s + "|" + cfgSignature(cfg);
@@ -428,6 +495,7 @@
       el.querySelector(".dd-sale")
     ) {
       setOneTimeCompareHidden(el, true);
+      setWidgetSrText(el, s, o, false);
       if (handled) handled.add(el);
       return;
     }
@@ -435,6 +503,7 @@
     el.innerHTML = priceInnerHtml(o, s, cfg);
     el.setAttribute("data-dd-widget-key", key);
     setOneTimeCompareHidden(el, true);
+    setWidgetSrText(el, s, o, false);
     if (handled) handled.add(el);
   }
 
@@ -449,30 +518,57 @@
       });
     }
     // Structural fallback: Appstle renders the one-time row differently
-    // in some widget variants, so the price span may not carry the
+    // across widget types, so the price span may not carry the
     // configured .appstle_onetime_amount class at all — the selector
     // above then finds nothing and the row is never rewritten. Find the
     // one-time row by its radio (selling_plan value="") and rewrite the
     // price span inside it. Only the one-time row is ever matched (the
     // Subscribe row's radio carries a plan id, never ""), and only a span
     // currently showing the one-time original/sale price is rewritten.
-    // The selector path and this path can both find the same span;
-    // applyWidgetOneTime's key + .dd-sale guard makes the second call
-    // a no-op, so nothing is ever rewritten twice.
+    // Widget types:
+    //   - Mustache template (WIDGET_TYPE_3/4/5/6): the radio sits inside
+    //     .appstle_input_wrapper / a label, and the price is
+    //     span.appstle_sellingPlan_price.
+    //   - Programmatic widget (WIDGET_TYPE_2, the live store's type):
+    //     the radio is a direct child of
+    //     .appstle_one_time_details_wrapper (the label is a SIBLING, not
+    //     a parent, and there is no .appstle_input_wrapper), and the
+    //     visible price is span.appstle_subscription_amount.transcy-money.
+    //     The v9 fallback used only the Mustache path, so on
+    //     WIDGET_TYPE_2 closest() returned null and nothing was ever
+    //     rewritten — that is why the row price never changed even though
+    //     the badge (Appstle's own bundle-discount slot) sometimes
+    //     appeared. The selector path and this path can both find the
+    //     same span; applyWidgetOneTime's key + .dd-sale guard makes the
+    //     second call a no-op, so nothing is ever rewritten twice.
     document
       .querySelectorAll('input[name="selling_plan"][value=""]')
       .forEach(function (radio) {
         var wrap = radio.closest
-          ? radio.closest(".appstle_input_wrapper, label")
+          ? radio.closest(
+              ".appstle_one_time_details_wrapper, .appstle_input_wrapper, .appstle_subscription_wrapper_option, label",
+            )
           : null;
         if (!wrap || !wrap.querySelectorAll) return;
         wrap
-          .querySelectorAll("span.appstle_sellingPlan_price")
+          .querySelectorAll(
+            "span.appstle_subscription_amount, span.appstle_sellingPlan_price",
+          )
           .forEach(function (el) {
             if (
               el.classList &&
               (el.classList.contains("appstle_onetime_amount_compare") ||
-                el.classList.contains("appstle_price_block"))
+                el.classList.contains("appstle_price_block") ||
+                el.classList.contains(
+                  "appstle_subscription_amount_compare_at_price",
+                ) ||
+                el.classList.contains(
+                  "appstle_subscription_amount_compare_at_price-appstle-sr-only",
+                ) ||
+                el.classList.contains(
+                  "appstle_subscription_amount-appstle-sr-only",
+                ) ||
+                el.classList.contains("sr-only"))
             ) {
               return;
             }
@@ -843,6 +939,13 @@
                 "aria-label",
                 "Price: " + money(lineSale) + ", was " + money(lp.o),
               );
+              // Hide the theme's own <s class="was"> while our rewrite
+              // is active (Enzymes / Probiotics 2 / Taste 2 render one
+              // in this line, which otherwise duplicates our struck
+              // price). Restored below when the rewrite is removed.
+              setPriceLineWasHidden(line, true);
+            } else {
+              setPriceLineWasHidden(line, false);
             }
             return;
           }

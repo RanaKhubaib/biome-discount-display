@@ -674,3 +674,215 @@ test("widget one-time row survives Appstle replacing the whole span, even withou
     dom.window.close();
   }
 });
+
+// WIDGET_TYPE_2 — the live store's Appstle widget type. It is built
+// programmatically by Appstle's JS, NOT from the Mustache template, so
+// its one-time row has no .appstle_onetime_amount class and no
+// .appstle_sellingPlan_price span: the radio is a direct child of
+// .appstle_one_time_details_wrapper (the label is a SIBLING, not a
+// parent) and the visible price is
+// span.appstle_subscription_amount.transcy-money, with sr-only amount +
+// compare spans beside it. The v9 structural fallback looked only for
+// .appstle_input_wrapper / label and span.appstle_sellingPlan_price,
+// so on this widget type closest() returned null and the row price was
+// never rewritten.
+const PRODUCT_HTML_WIDGET_TYPE_2 = `
+<div class="shopify-section">
+  <div class="product">
+    <div class="price">$59.97</div>
+    <form action="/cart/add">
+      <input type="hidden" name="id" value="${VARIANT}">
+      <input type="radio" name="selling_plan" value="" checked>
+      <input type="radio" name="selling_plan" value="6152224985">
+    </form>
+    <div class="appstle_subscription_wrapper">
+      <div class="appstle_subscription_wrapper_option appstle_subscription_wrapper_option__one_time">
+        <div class="appstle_one_time_details_wrapper">
+          <input type="radio" name="selling_plan" value="" id="appstle_selling_plan_label_1" checked>
+          <label class="appstle_radio_label">
+            <span class="appstle_circle"><span class="appstle_dot"></span></span>
+            <span class="appstle_one_time_text">One Time Purchase</span>
+          </label>
+          <div class="appstle_one_time_price_wrapper has-compare-price">
+            <span class="appstle_subscription_amount transcy-money" aria-hidden="true">$59.97</span>
+            <span class="appstle_subscription_amount-appstle-sr-only transcy-money sr-only">Regular price $59.97</span>
+            <span class="appstle_subscription_amount_compare_at_price transcy-money" aria-hidden="true"></span>
+            <span class="appstle_subscription_amount_compare_at_price-appstle-sr-only transcy-money sr-only"></span>
+            <div class="appstle_one_time_unit_price"></div>
+          </div>
+        </div>
+        <span class="appstle_bundle_discount_amount one_time_discount"></span>
+        <div class="appstle_one_time_description_text">Delivered once</div>
+      </div>
+      <div class="appstle_subscription_wrapper_option appstle_subscription_wrapper_option__subscription">
+        <div class="appstle_subscription_details_wrapper">
+          <input type="radio" name="selling_plan" value="6152224985" id="appstle_selling_plan_label_2">
+          <label class="appstle_radio_label">
+            <span class="appstle_circle"><span class="appstle_dot"></span></span>
+            <span class="appstle_subscription_text">Subscribe &amp; Save</span>
+          </label>
+          <div class="appstle_subscription_price_wrapper">
+            <span class="appstle_subscription_amount transcy-money" aria-hidden="true">$47.98</span>
+            <span class="appstle_subscription_amount-appstle-sr-only transcy-money sr-only">Sale price $47.98</span>
+            <span class="appstle_subscription_amount_compare_at_price transcy-money" aria-hidden="true">$59.97</span>
+          </div>
+        </div>
+        <span class="appstle_bundle_discount_amount subscription_discount">SAVE 20%</span>
+      </div>
+    </div>
+  </div>
+</div>`;
+
+test("widget one-time row (WIDGET_TYPE_2) is rewritten like the Subscribe row", () => {
+  const dom = runPage(
+    PRODUCT_HTML_WIDGET_TYPE_2,
+    `https://biometheory.shop/products/${HANDLE}`,
+    baseSettings(),
+    basePrices(),
+  );
+  try {
+    const doc = dom.window.document;
+    // The one-time visible price is rewritten to sale + struck original
+    // + badge, in the same order as the Subscribe row.
+    const oneTime = doc.querySelector(
+      ".appstle_one_time_price_wrapper .appstle_subscription_amount",
+    );
+    assert.ok(oneTime, "expected a one-time price span in the row");
+    assert.deepEqual(directPartOrder(oneTime), [
+      "dd-sale",
+      "dd-orig",
+      "dd-badge dd-badge--pill dd-badge--medium",
+    ]);
+    assert.equal(oneTime.querySelector(".dd-sale").textContent, "$50.97");
+    assert.equal(oneTime.querySelector(".dd-orig").textContent, "$59.97");
+    assert.equal(oneTime.querySelector(".dd-badge").textContent, "Save 15%");
+    // The sr-only text follows the visible rewrite, so a page-text read
+    // shows the sale price, not the stale "Regular price $59.97".
+    assert.equal(
+      doc.querySelector(
+        ".appstle_one_time_price_wrapper .appstle_subscription_amount-appstle-sr-only",
+      ).textContent,
+      "Sale price $50.97",
+    );
+    assert.equal(
+      doc.querySelector(
+        ".appstle_one_time_price_wrapper .appstle_subscription_amount_compare_at_price-appstle-sr-only",
+      ).textContent,
+      "Regular price $59.97",
+    );
+    // The WIDGET_TYPE_2 compare span stays hidden while ours is shown.
+    assert.equal(
+      doc.querySelector(
+        ".appstle_one_time_price_wrapper .appstle_subscription_amount_compare_at_price",
+      ).style.display,
+      "none",
+    );
+    // The Subscribe row is Appstle's — price, badge and markup untouched.
+    const subPrice = doc.querySelector(
+      ".appstle_subscription_price_wrapper .appstle_subscription_amount",
+    );
+    assert.equal(subPrice.textContent, "$47.98");
+    assert.equal(subPrice.querySelector(".dd-sale"), null);
+    assert.equal(
+      doc.querySelector(".subscription_discount").textContent,
+      "SAVE 20%",
+    );
+  } finally {
+    dom.window.close();
+  }
+});
+
+test("widget one-time row (WIDGET_TYPE_2) survives Appstle re-rendering its text", async () => {
+  const dom = runPage(
+    PRODUCT_HTML_WIDGET_TYPE_2,
+    `https://biometheory.shop/products/${HANDLE}`,
+    baseSettings(),
+    basePrices(),
+  );
+  try {
+    const doc = dom.window.document;
+    const pick = () =>
+      doc.querySelector(
+        ".appstle_one_time_price_wrapper .appstle_subscription_amount",
+      );
+    assert.ok(pick().querySelector(".dd-sale"), "expected the row rewritten on load");
+    // Appstle re-renders the price span's text (its .html() call wipes
+    // our markup but leaves the data key behind).
+    pick().innerHTML = "$59.97";
+    await sleep(400);
+    assert.equal(pick().querySelector(".dd-sale").textContent, "$50.97");
+    assert.equal(pick().querySelector(".dd-badge").textContent, "Save 15%");
+    assert.equal(
+      doc.querySelector(
+        ".appstle_one_time_price_wrapper .appstle_subscription_amount-appstle-sr-only",
+      ).textContent,
+      "Sale price $50.97",
+    );
+    // Subscribe row still untouched after the re-render.
+    const subPrice = doc.querySelector(
+      ".appstle_subscription_price_wrapper .appstle_subscription_amount",
+    );
+    assert.equal(subPrice.textContent, "$47.98");
+    assert.equal(subPrice.querySelector(".dd-sale"), null);
+  } finally {
+    dom.window.close();
+  }
+});
+
+// Enzymes / Probiotics 2 / Taste 2 render their own struck compare-at
+// (<s class="was">$59.97</s>) inside the price line, so the app's
+// .price-line .now rewrite added a second struck $59.97. The app now
+// hides the theme's <s class="was"> while its rewrite is active, so the
+// line shows exactly one struck price.
+const LANDING_HTML_DUP_WAS = LANDING_HTML.replace(
+  '<s class="was"></s>',
+  '<s class="was">$59.97</s>',
+);
+
+test("landing price line shows exactly one struck price when the theme already has <s class=was>", async () => {
+  const dom = runPage(
+    LANDING_HTML_DUP_WAS,
+    "https://biometheory.shop/pages/biome-enzymes",
+    baseSettings(),
+    basePrices(),
+    (window) => {
+      window.document.body.dataset.flavor = "mango";
+      window.GF_PRODUCTS = { mango: { variant: VARIANT } };
+    },
+  );
+  try {
+    const doc = dom.window.document;
+    const line = doc.querySelector(".price-line");
+    // Subscribe is selected: the line shows the subscribe sale.
+    const now = doc.querySelector(".price-line .now");
+    assert.equal(now.querySelector(".dd-sale").textContent, "$47.98");
+    assert.equal(now.querySelector(".dd-orig").textContent, "$59.97");
+    assert.equal(now.querySelector(".dd-badge").textContent, "Save 20%");
+    // The theme's own struck compare-at is hidden, so there is exactly
+    // one visible struck price in the line.
+    const was = line.querySelector("s.was");
+    assert.equal(was.textContent, "$59.97");
+    assert.equal(was.style.display, "none");
+    const visibleStruck = [...line.querySelectorAll("s")].filter(
+      (s) => s.style.display !== "none",
+    );
+    assert.equal(visibleStruck.length, 1);
+
+    // Switch to One-time: the line follows to the one-time sale and the
+    // theme's struck price stays hidden.
+    doc.querySelector('input[name="gf-purchase"][value="onetime"]').checked = true;
+    doc.querySelector('input[name="gf-purchase"][value="subscribe"]').checked = false;
+    doc.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+    await sleep(150);
+    assert.equal(now.querySelector(".dd-sale").textContent, "$50.97");
+    assert.equal(now.querySelector(".dd-badge").textContent, "Save 15%");
+    assert.equal(was.style.display, "none");
+    assert.equal(
+      [...line.querySelectorAll("s")].filter((s) => s.style.display !== "none")
+        .length,
+      1,
+    );
+  } finally {
+    dom.window.close();
+  }
+});
