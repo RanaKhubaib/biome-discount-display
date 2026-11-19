@@ -120,6 +120,44 @@ query ($ids: [ID!]!) {
   }
 }`;
 
+// The subscription selling-plan group (Appstle's "Every Month" plan). Read
+// to get the live subscribe % — selling plans are read under the
+// read_products scope, which this app has. Selling-plan percentages are
+// WHOLE numbers (20 = 20%), unlike discount percentages which are
+// fractions (0.15 = 15%). The Fixed pricing policy is the first-order
+// price; a Recurring policy (if any) is the renewal price and is ignored
+// here — the subscribe price shown is always the first-order price.
+const SELLING_PLAN_GROUP_QUERY = `#graphql
+query ($id: ID!) {
+  node(id: $id) {
+    id
+    ... on SellingPlanGroup {
+      products(first: 100) { nodes { id } }
+      sellingPlans(first: 50) {
+        nodes {
+          id
+          name
+          pricingPolicies {
+            __typename
+            ... on SellingPlanFixedPricingPolicy {
+              adjustmentType
+              adjustmentValue {
+                ... on SellingPlanPricingPolicyPercentageValue { percentage }
+              }
+            }
+            ... on SellingPlanRecurringPricingPolicy {
+              adjustmentType
+              adjustmentValue {
+                ... on SellingPlanPricingPolicyPercentageValue { percentage }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}`;
+
 const SHOP_QUERY = `#graphql
 query {
   shop {
@@ -157,6 +195,20 @@ export const DEFAULT_SETTINGS = {
   // Matches the theme's .save-badge (forest green, white text).
   badgeBg: "#42572A",
   badgeColor: "#ffffff",
+  // The subscription selling-plan group to read the live subscribe % from
+  // (Appstle's group). The subscribe price follows this plan automatically.
+  sellingPlanGroupId: "gid://shopify/SellingPlanGroup/3389751513",
+  // Manual subscribe % (0-100, e.g. 20 = 20% off). Used ONLY when the
+  // selling-plan group cannot be read (scope, deleted group, no percentage).
+  // Null = no fallback; subscribe data is then omitted.
+  subPctFallback: null,
+  // Landing-page starburst badge(s) — the "SAVE 20%" burst on the product
+  // image in hero + final sections. The script rewrites only the % number
+  // to the selected purchase mode's dynamic %.
+  landingBadgeSelectors: [".burst"],
+  // Merchant custom CSS, injected as a <style> element on every page where
+  // the embed runs. Empty = nothing injected.
+  customCss: "",
 };
 
 const numId = (gid) => gid.split("/").pop();
@@ -165,6 +217,25 @@ function validHex(value, fallback) {
   return typeof value === "string" && /^#[0-9a-fA-F]{3,8}$/.test(value.trim())
     ? value.trim()
     : fallback;
+}
+
+// A subscribe % as a whole number (20 = 20% off). Accepts a number or a
+// numeric string; anything else (or 0 / over 100) means "not set".
+function parseSubPct(value) {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    value = Number(trimmed);
+  }
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  if (value <= 0 || value > 100) return null;
+  return Math.round(value * 100) / 100;
+}
+
+function validCustomCss(value) {
+  if (typeof value !== "string") return "";
+  // Cap it so a pasted stylesheet cannot bloat the settings metafield.
+  return value.slice(0, 20000);
 }
 
 async function readGraphQL(admin, query, variables) {
@@ -233,6 +304,19 @@ export async function loadSettings(admin) {
       null,
       DEFAULT_SETTINGS.landingSelectors,
     ),
+    sellingPlanGroupId:
+      typeof saved.sellingPlanGroupId === "string" &&
+      saved.sellingPlanGroupId.trim()
+        ? saved.sellingPlanGroupId.trim()
+        : DEFAULT_SETTINGS.sellingPlanGroupId,
+    subPctFallback: parseSubPct(saved.subPctFallback),
+    landingBadgeSelectors: getSelectors(
+      saved,
+      "landingBadgeSelectors",
+      null,
+      DEFAULT_SETTINGS.landingBadgeSelectors,
+    ),
+    customCss: validCustomCss(saved.customCss),
   };
 }
 
@@ -384,6 +468,79 @@ async function extractRule(admin, discount, collectionCache) {
   return { value, productIds, variantIds, variantProductIds };
 }
 
+// Reads the live subscribe % for the storefront. Prefers the selling-plan
+// group's "Every Month" plan (first Fixed pricing policy with a percentage);
+// falls back to the merchant's manual subscribe % setting; returns null
+// when neither is available. Also returns the product ids the group is
+// attached to, so subscribe prices are only computed for products that are
+// actually subscribable. A failed group read never throws — it degrades to
+// the fallback (or to no subscribe data), so a plan problem cannot break
+// the one-time sync.
+async function resolveSubPct(admin, settings) {
+  const groupId =
+    typeof settings.sellingPlanGroupId === "string" &&
+    settings.sellingPlanGroupId.trim()
+      ? settings.sellingPlanGroupId.trim()
+      : DEFAULT_SETTINGS.sellingPlanGroupId;
+  if (groupId) {
+    try {
+      const data = await readGraphQL(admin, SELLING_PLAN_GROUP_QUERY, {
+        id: groupId,
+      });
+      const group = data.node;
+      const plans = group?.sellingPlans?.nodes || [];
+      const plan =
+        plans.find((p) => /every month/i.test(p.name || "")) || plans[0];
+      if (plan) {
+        const policies = plan.pricingPolicies || [];
+        // Prefer the Fixed policy (first-order price); any percentage
+        // policy is a fallback within the plan.
+        const ordered = [
+          ...policies.filter(
+            (p) => p.__typename === "SellingPlanFixedPricingPolicy",
+          ),
+          ...policies.filter(
+            (p) => p.__typename !== "SellingPlanFixedPricingPolicy",
+          ),
+        ];
+        for (const policy of ordered) {
+          if (
+            policy.adjustmentType === "PERCENTAGE" &&
+            typeof policy.adjustmentValue?.percentage === "number"
+          ) {
+            const pct = parseSubPct(policy.adjustmentValue.percentage);
+            if (pct !== null) {
+              const productIds = (group.products?.nodes || [])
+                .map((p) => p?.id)
+                .filter(Boolean);
+              return { pct, source: "plan", productIds };
+            }
+          }
+        }
+      }
+    } catch (error) {
+      // Fall through to the manual fallback below.
+    }
+  }
+  const fallback = parseSubPct(settings.subPctFallback);
+  if (fallback !== null) return { pct: fallback, source: "fallback", productIds: null };
+  return { pct: null, source: null, productIds: null };
+}
+
+// One variant's storefront prices. o/s are the one-time original/sale
+// (kept for backwards compatibility); op is the one-time % off; sp/spp
+// are the subscribe sale price / subscribe % off, added only when a
+// subscribe % is known AND the product is subscribable.
+function variantRecord(orig, sale, subPct, subscribable) {
+  const record = { o: orig, s: sale };
+  if (sale < orig) record.op = Math.round((1 - sale / orig) * 100);
+  if (subPct && subscribable) {
+    record.sp = Math.round(orig * (1 - subPct / 100) * 100) / 100;
+    record.spp = subPct;
+  }
+  return record;
+}
+
 async function savePrices(admin, out) {
   const shopData = await readGraphQL(admin, SHOP_QUERY);
   const saveResult = await readGraphQL(admin, SET_MUTATION, {
@@ -464,8 +621,16 @@ export async function syncDiscounts(admin, settings = {}) {
   }
 
   // Calculate sale prices from the selected discount only.
+  // The subscribe % is resolved once per sync (plan first, manual fallback).
+  const sub = await resolveSubPct(admin, settings);
+
   const out = {};
   for (const p of products) {
+    // Subscribe prices only for products the selling-plan group covers.
+    // When the plan could not be read (fallback %), apply to every
+    // discounted product — the merchant set the % knowing the catalogue.
+    const subscribable =
+      sub.productIds !== null ? sub.productIds.includes(p.id) : true;
     const variants = {};
     let discountedVariantCount = 0;
     for (const v of p.variants.nodes) {
@@ -477,19 +642,30 @@ export async function syncDiscounts(admin, settings = {}) {
         : orig;
       const finalSale = sale < orig ? sale : orig;
       if (finalSale < orig) discountedVariantCount++;
-      variants[numId(v.id)] = { o: orig, s: finalSale };
+      variants[numId(v.id)] = variantRecord(
+        orig,
+        finalSale,
+        sub.pct,
+        subscribable,
+      );
     }
     const list = Object.values(variants);
     if (discountedVariantCount === 0) continue;
     const discounted = list.filter((variant) => variant.s < variant.o);
     const lowest = discounted.reduce((a, b) => (b.s < a.s ? b : a));
-    const entry = { variants, o: lowest.o, s: lowest.s };
+    // Entry and card carry the lowest variant's prices (one-time + subscribe).
+    const entry = { variants, ...lowest };
     if (discountedVariantCount === list.length) {
-      entry.card = { o: lowest.o, s: lowest.s };
+      entry.card = { ...lowest };
     }
     out[p.handle] = entry;
   }
 
   await savePrices(admin, out);
-  return { count: Object.keys(out).length, discountTitle: discount.title || "" };
+  return {
+    count: Object.keys(out).length,
+    discountTitle: discount.title || "",
+    subPct: sub.pct,
+    subPctSource: sub.source,
+  };
 }

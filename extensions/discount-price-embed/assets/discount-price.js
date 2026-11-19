@@ -33,6 +33,67 @@
   var saleColor = validHex(S.saleColor, "#d82c0d");
   var badgeBg = validHex(S.badgeBg, "#42572A");
   var badgeColor = validHex(S.badgeColor, "#ffffff");
+  var badgeRadius =
+    S.badgeStyle === "rounded" ? "6px" : S.badgeStyle === "square" ? "2px" : "999px";
+
+  // Merchant custom CSS (settings > Custom CSS). Injected once as a
+  // <style> element whose text content is the CSS, so it styles anything
+  // on the page. Re-applied on every run so a settings change takes
+  // effect without a reload; removed again when the field is emptied.
+  function injectCustomCss() {
+    var css = typeof S.customCss === "string" ? S.customCss : "";
+    var el = document.getElementById("dd-custom-css");
+    if (!css.trim()) {
+      if (el) el.remove();
+      return;
+    }
+    if (!el) {
+      el = document.createElement("style");
+      el.id = "dd-custom-css";
+      document.head.appendChild(el);
+    }
+    if (el.textContent !== css) el.textContent = css;
+  }
+
+  // Appstle's subscribe badge (span.appstle_sellingPlan_discountText, the
+  // "Save 20%" pill on the Subscribe option) is styled by Appstle's own
+  // widget CSS — currently a pale green (#78F39D) set with !important in
+  // the widget's custom CSS. Restyle it to this app's badge colours so the
+  // product page's two badges match. Only colours + corner radius are
+  // changed; position, size and layout are left to Appstle, and the badge
+  // text, prices and widget behaviour are never touched.
+  // A stylesheet rule (specificity beats Appstle's) makes the restyle
+  // survive Appstle re-rendering the badge; an inline style (below) is
+  // applied on every run as well, so it takes effect immediately.
+  function injectAppstleBadgeCss() {
+    if (!S.badgeEnabled) return;
+    var el = document.getElementById("dd-appstle-badge");
+    var css =
+      "body span.appstle_sellingPlan_discountText{background-color:" +
+      badgeBg +
+      " !important;color:" +
+      badgeColor +
+      " !important;border-radius:" +
+      badgeRadius +
+      " !important;}";
+    if (!el) {
+      el = document.createElement("style");
+      el.id = "dd-appstle-badge";
+      document.head.appendChild(el);
+    }
+    if (el.textContent !== css) el.textContent = css;
+  }
+
+  function restyleAppstleBadge() {
+    if (!S.badgeEnabled) return;
+    document
+      .querySelectorAll("span.appstle_sellingPlan_discountText")
+      .forEach(function (el) {
+        el.style.setProperty("background-color", badgeBg, "important");
+        el.style.setProperty("color", badgeColor, "important");
+        el.style.setProperty("border-radius", badgeRadius, "important");
+      });
+  }
 
   function selectorList(selectors, legacySelector) {
     var list = Array.isArray(selectors) ? selectors : [legacySelector];
@@ -310,7 +371,93 @@
     return null;
   }
 
+  // Which purchase mode is currently selected in a landing-page buy box?
+  // Prefers the checked One-time / Subscribe radio; falls back to the row
+  // the theme marks selected. Subscribe is the theme's pre-selected mode,
+  // so the radio is the source of truth on load.
+  function landingSelectedMode() {
+    var checked = document.querySelector(
+      'input[type="radio"][name$="-purchase"]:checked',
+    );
+    if (
+      checked &&
+      (checked.value === "subscribe" || checked.value === "onetime")
+    ) {
+      return checked.value;
+    }
+    var sel = document.querySelector('.purchase-opt[data-selected="true"]');
+    if (sel) {
+      var v = sel.getAttribute("data-purchase-opt");
+      if (v === "subscribe" || v === "onetime") return v;
+    }
+    return "onetime";
+  }
+
+  // Rewrite only the % number inside a starburst badge
+  // (<div class="burst"><span>SAVE<br>20%</span></div>). The shape, text
+  // and position are never changed — just the number.
+  function setBurstPct(pct) {
+    if (!(pct > 0)) return;
+    var badgeSelector = selectorList(S.landingBadgeSelectors, ".burst");
+    if (!badgeSelector) return;
+    document.querySelectorAll(badgeSelector).forEach(function (el) {
+      var target = el.querySelector("span") || el;
+      var html = target.innerHTML;
+      if (!/(\d+(?:\.\d+)?)%/.test(html)) return;
+      var next = html.replace(/(\d+(?:\.\d+)?)%/, pct + "%");
+      if (next !== html) target.innerHTML = next;
+    });
+  }
+
+  // Landing-page badges follow the selected purchase mode, using the
+  // dynamic % from the synced metafield (never a hardcoded number):
+  //  - the starburst shows the SELECTED mode's % (one-time % when
+  //    One-time is picked, subscribe % when Subscribe & Save is picked);
+  //  - each buy-box row's own Save pill shows its own mode's dynamic %.
+  // Runs on load and on every purchase-type change (run() is re-invoked
+  // by the change/click listeners and the MutationObserver below).
+  function updateLandingBadges() {
+    if (!S.showOnLandingPages) return;
+    var lp = landingPrices();
+    if (!lp) return;
+    var mode = landingSelectedMode();
+    var burstPct =
+      mode === "subscribe" ? lp.spp || null : lp.op || null;
+    if (!burstPct) burstPct = lp.op || lp.spp || null;
+    if (burstPct) setBurstPct(burstPct);
+    // Each row's Save pill shows its own mode's dynamic %. (The one-time
+    // row is usually already rewritten by the app into its own badge, in
+    // which case there is no theme pill left here to update.) Only write
+    // when the text actually changes — an unconditional write would fire
+    // the MutationObserver on every run and never settle.
+    document
+      .querySelectorAll(
+        '.purchase-opt[data-purchase-opt="onetime"] .save-badge',
+      )
+      .forEach(function (el) {
+        if (lp.op) {
+          var wantOt = "Save " + lp.op + "%";
+          if (el.textContent !== wantOt) el.textContent = wantOt;
+        }
+      });
+    document
+      .querySelectorAll(
+        '.purchase-opt[data-purchase-opt="subscribe"] .save-badge',
+      )
+      .forEach(function (el) {
+        if (lp.spp) {
+          var wantSub = "Save " + lp.spp + "%";
+          if (el.textContent !== wantSub) el.textContent = wantSub;
+        }
+      });
+  }
+
   function run() {
+    injectCustomCss();
+    injectAppstleBadgeCss();
+    restyleAppstleBadge();
+    updateLandingBadges();
+
     // Landing pages (buy boxes and other one-time prices).
     if (S.showOnLandingPages) {
       var landingSelector = selectorList(S.landingSelectors, null);

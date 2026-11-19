@@ -3,7 +3,7 @@
 client_id = "405daa15b76b8a90c2e063289c7da058"
 application_url = "https://biome-discount-display.vercel.app"
 embedded = true
-name = "disocunt app"
+name = "Biome Discount Display"
 
 [access_scopes]
 # Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
@@ -63,5 +63,4 @@ api_version = "2026-10"
 redirect_urls = [ ]
 
 [build]
-include_config_on_deploy = true
 automatically_update_urls_on_dev = true

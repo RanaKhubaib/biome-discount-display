@@ -42,6 +42,7 @@ export const action = async ({ request }) => {
   const cardSelectors = readSelectors("cardSelectors");
   const productSelectors = readSelectors("productSelectors");
   const landingSelectors = readSelectors("landingSelectors");
+  const landingBadgeSelectors = readSelectors("landingBadgeSelectors");
   const showOnLandingPages = f.get("showOnLandingPages") === "on";
 
   if (cardSelectors.length === 0 || productSelectors.length === 0) {
@@ -60,6 +61,15 @@ export const action = async ({ request }) => {
   }
 
   const discountId = String(f.get("discountId") || "").trim();
+  const subPctRaw = String(f.get("subPctFallback") || "").trim();
+  const subPctFallback = subPctRaw === "" ? null : Number(subPctRaw);
+  if (subPctFallback !== null && !(subPctFallback > 0 && subPctFallback <= 100)) {
+    return {
+      ok: false,
+      error: "Subscribe % fallback must be a number between 1 and 100, or blank.",
+    };
+  }
+  const sellingPlanGroupId = String(f.get("sellingPlanGroupId") || "").trim();
   const settings = {
     enabled: f.get("enabled") === "on",
     showOnCards: f.get("showOnCards") === "on",
@@ -69,6 +79,8 @@ export const action = async ({ request }) => {
     cardSelectors,
     productSelectors,
     landingSelectors,
+    landingBadgeSelectors:
+      landingBadgeSelectors.length > 0 ? landingBadgeSelectors : [".burst"],
     discountId: discountId || null,
     discountTitle: String(f.get("discountTitle") || ""),
     badgeEnabled: f.get("badgeEnabled") === "on",
@@ -76,6 +88,10 @@ export const action = async ({ request }) => {
     badgeSize: String(f.get("badgeSize") || "medium"),
     badgeBg: String(f.get("badgeBg") || "#42572A"),
     badgeColor: String(f.get("badgeColor") || "#ffffff"),
+    sellingPlanGroupId:
+      sellingPlanGroupId || "gid://shopify/SellingPlanGroup/3389751513",
+    subPctFallback,
+    customCss: String(f.get("customCss") || "").slice(0, 20000),
   };
   await saveSettings(admin, settings);
 
@@ -118,6 +134,10 @@ export default function Settings() {
   const [landingSelectors, setLandingSelectors] = useState(
     settings.landingSelectors,
   );
+  const [landingBadgeSelectors, setLandingBadgeSelectors] = useState(
+    settings.landingBadgeSelectors || [".burst"],
+  );
+  const [customCss, setCustomCss] = useState(settings.customCss || "");
   const [selectedDiscountId, setSelectedDiscountId] = useState(
     settings.discountId || "",
   );
@@ -294,6 +314,16 @@ export default function Settings() {
                   ? `The selected discount could not be found, so sale prices were cleared.`
                   : `No discount is selected, so sale prices were cleared.`
               : `${fetcher.data.count} discounted product(s) synced from “${fetcher.data.discountTitle}”.`}
+            {!fetcher.data.cleared &&
+              fetcher.data.subPct != null &&
+              ` Subscribe ${fetcher.data.subPct}% off${
+                fetcher.data.subPctSource === "fallback"
+                  ? " (manual fallback — the selling plan could not be read)"
+                  : " (from the selling plan)"
+              }.`}
+            {!fetcher.data.cleared &&
+              fetcher.data.subPct == null &&
+              ` No subscribe % was found — set a manual fallback below if you want subscribe prices shown.`}
           </div>
         )}
         {fetcher.data?.error && (
@@ -467,6 +497,69 @@ export default function Settings() {
                     admin first, then come back here to pick it.
                   </p>
                 )}
+              </div>
+            </div>
+          </s-section>
+
+          <s-section heading="Subscription">
+            <div style={{ padding: 4 }}>
+              <p style={{ margin: "0 0 12px", color: "#616161", fontSize: 14 }}>
+                The subscribe price and “Save %” follow your subscription
+                selling plan automatically — change the plan in Appstle and the
+                storefront updates on the next sync. The manual % below is
+                only a fallback, used if the plan cannot be read.
+              </p>
+              <div style={{ display: "grid", gap: 16 }}>
+                <label style={{ display: "grid", gap: 6 }}>
+                  <strong>Selling plan group ID</strong>
+                  <input
+                    type="text"
+                    name="sellingPlanGroupId"
+                    defaultValue={settings.sellingPlanGroupId}
+                    placeholder="gid://shopify/SellingPlanGroup/3389751513"
+                    style={{
+                      boxSizing: "border-box",
+                      width: "100%",
+                      padding: "10px 12px",
+                      border: "1px solid #8c9196",
+                      borderRadius: 8,
+                      font: "inherit",
+                    }}
+                  />
+                  <span style={{ color: "#616161", fontSize: 14 }}>
+                    The Appstle group the subscribe % is read from. Only
+                    change this if Appstle creates a new group.
+                  </span>
+                </label>
+                <label style={{ display: "grid", gap: 6 }}>
+                  <strong>Subscribe % fallback (optional)</strong>
+                  <input
+                    type="number"
+                    name="subPctFallback"
+                    min="1"
+                    max="100"
+                    step="0.5"
+                    defaultValue={
+                      settings.subPctFallback != null
+                        ? settings.subPctFallback
+                        : ""
+                    }
+                    placeholder="e.g. 20"
+                    style={{
+                      boxSizing: "border-box",
+                      width: 140,
+                      padding: "10px 12px",
+                      border: "1px solid #8c9196",
+                      borderRadius: 8,
+                      font: "inherit",
+                    }}
+                  />
+                  <span style={{ color: "#616161", fontSize: 14 }}>
+                    A whole-number percent (20 = 20% off). Used only when the
+                    selling plan cannot be read. Leave blank to rely on the
+                    plan alone.
+                  </span>
+                </label>
               </div>
             </div>
           </s-section>
@@ -738,6 +831,44 @@ export default function Settings() {
                 '.purchase-opt[data-purchase-opt="onetime"] .purchase-price',
                 "Selectors for one-time prices on landing pages, for example the One-time purchase row in a buy box. Only add selectors for one-time prices — never add one that matches a subscribe price.",
               )}
+              {renderSelectors(
+                "Landing page badge selectors",
+                "landingBadgeSelectors",
+                landingBadgeSelectors,
+                setLandingBadgeSelectors,
+                ".burst",
+                "Selectors for the starburst badge on landing pages (the “SAVE %” burst on the product image). The app rewrites only the % number to the selected purchase mode — One-time % when One-time is picked, Subscribe % when Subscribe & Save is picked. It never changes the burst shape.",
+              )}
+            </div>
+          </s-section>
+
+          <s-section heading="Custom CSS">
+            <div style={{ padding: 4 }}>
+              <p style={{ margin: "0 0 12px", color: "#616161", fontSize: 14 }}>
+                Extra CSS applied on every page where the discount display
+                runs. Use it to style anything differently — for example the
+                sale price or a badge — without touching the theme. It is
+                injected as a style element, so it applies everywhere the
+                app runs.
+              </p>
+              <textarea
+                name="customCss"
+                value={customCss}
+                onChange={(event) => setCustomCss(event.target.value)}
+                placeholder={".dd-sale { font-weight: 700; }"}
+                rows={6}
+                aria-label="Custom CSS"
+                style={{
+                  boxSizing: "border-box",
+                  width: "100%",
+                  padding: "10px 12px",
+                  border: "1px solid #8c9196",
+                  borderRadius: 8,
+                  font: "inherit",
+                  fontFamily: "monospace",
+                  resize: "vertical",
+                }}
+              />
             </div>
           </s-section>
 
