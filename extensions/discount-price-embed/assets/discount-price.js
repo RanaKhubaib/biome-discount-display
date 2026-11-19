@@ -476,6 +476,31 @@
     });
   }
 
+  // Does this one-time row already carry Appstle's own bundle-discount
+  // pill on the left (.appstle_bundle_discount_amount.one_time_discount,
+  // filled by Appstle's bundle logic)? On the live store (WIDGET_TYPE_2)
+  // that pill is the row's one badge, matching the Subscribe row's
+  // single left pill — so the app's price rewrite must NOT add a second
+  // badge on the right. The pill span is rendered empty by Appstle and
+  // filled later, so only a non-empty pill counts; an empty placeholder
+  // means no visible Appstle pill yet and the app badge still renders.
+  // The pill is a child of the row's outer option wrapper — a sibling
+  // of the details/radio wrapper, NOT inside it — so the container must
+  // be the outer option div (.appstle_subscription_wrapper_option on
+  // WIDGET_TYPE_2, .appstle_input_wrapper / label on the Mustache
+  // template), not .appstle_one_time_details_wrapper.
+  function rowHasAppstleBundleBadge(el) {
+    var container =
+      (el.closest &&
+        (el.closest(".appstle_subscription_wrapper_option") ||
+          el.closest(".appstle_input_wrapper") ||
+          el.closest("label"))) ||
+      el.parentNode;
+    if (!container || !container.querySelector) return false;
+    var badge = container.querySelector(".appstle_bundle_discount_amount");
+    return !!(badge && (badge.textContent || "").trim());
+  }
+
   function applyWidgetOneTime(el, o, s, cfg, handled) {
     if (s >= o) {
       if (el._ddWidgetOriginal !== undefined) {
@@ -487,7 +512,24 @@
       setWidgetSrText(el, s, o, true);
       return;
     }
-    var key = o + "|" + s + "|" + cfgSignature(cfg);
+    // If the row already shows Appstle's bundle-discount pill on the
+    // left, the price rewrite shows sale + struck original with NO app
+    // badge — exactly one badge per row, matching Subscribe. The badge
+    // decision is part of the key, so if Appstle fills its pill late
+    // the observer re-run re-renders the row without the app badge.
+    var effCfg = cfg;
+    if (cfg.showBadge && rowHasAppstleBundleBadge(el)) {
+      effCfg = {
+        originalFirst: cfg.originalFirst,
+        showBadge: false,
+        saleColor: cfg.saleColor,
+        badgeBg: cfg.badgeBg,
+        badgeColor: cfg.badgeColor,
+        badgeStyle: cfg.badgeStyle,
+        badgeSize: cfg.badgeSize,
+      };
+    }
+    var key = o + "|" + s + "|" + cfgSignature(effCfg);
     // Appstle re-renders this span's text on variant change, which wipes
     // our spans but leaves the key attribute — require our markup too.
     if (
@@ -500,7 +542,7 @@
       return;
     }
     if (el._ddWidgetOriginal === undefined) el._ddWidgetOriginal = el.innerHTML;
-    el.innerHTML = priceInnerHtml(o, s, cfg);
+    el.innerHTML = priceInnerHtml(o, s, effCfg);
     el.setAttribute("data-dd-widget-key", key);
     setOneTimeCompareHidden(el, true);
     setWidgetSrText(el, s, o, false);

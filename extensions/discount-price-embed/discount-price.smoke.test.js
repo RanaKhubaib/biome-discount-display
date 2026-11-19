@@ -829,6 +829,109 @@ test("widget one-time row (WIDGET_TYPE_2) survives Appstle re-rendering its text
   }
 });
 
+// WIDGET_TYPE_2 with Appstle's bundle-discount pill filled in: the
+// one-time row already carries Appstle's own "SAVE 15%" pill on the
+// left (.appstle_bundle_discount_amount.one_time_discount), so the
+// app's price rewrite must show sale + struck original with NO app
+// badge on the right — exactly one badge per row, matching the
+// Subscribe row (one left "SAVE 20%" pill, right side just the prices).
+const PRODUCT_HTML_WIDGET_TYPE_2_BUNDLE_BADGE =
+  PRODUCT_HTML_WIDGET_TYPE_2.replace(
+    '<span class="appstle_bundle_discount_amount one_time_discount"></span>',
+    '<span class="appstle_bundle_discount_amount one_time_discount">SAVE 15%</span>',
+  );
+
+test("widget one-time row (WIDGET_TYPE_2) shows no app badge when Appstle's bundle pill is already there", () => {
+  const dom = runPage(
+    PRODUCT_HTML_WIDGET_TYPE_2_BUNDLE_BADGE,
+    `https://biometheory.shop/products/${HANDLE}`,
+    baseSettings(),
+    basePrices(),
+  );
+  try {
+    const doc = dom.window.document;
+    // The one-time price is rewritten to sale + struck original, with
+    // NO app badge — the row's one badge is Appstle's left pill.
+    const oneTime = doc.querySelector(
+      ".appstle_one_time_price_wrapper .appstle_subscription_amount",
+    );
+    assert.ok(oneTime, "expected a one-time price span in the row");
+    assert.deepEqual(directPartOrder(oneTime), ["dd-sale", "dd-orig"]);
+    assert.equal(oneTime.querySelector(".dd-sale").textContent, "$50.97");
+    assert.equal(oneTime.querySelector(".dd-orig").textContent, "$59.97");
+    assert.equal(oneTime.querySelector(".dd-badge"), null);
+    // Appstle's left pill is untouched and still reads SAVE 15%.
+    assert.equal(
+      doc.querySelector(
+        ".appstle_bundle_discount_amount.one_time_discount",
+      ).textContent,
+      "SAVE 15%",
+    );
+    // The sr-only text still follows the visible rewrite.
+    assert.equal(
+      doc.querySelector(
+        ".appstle_one_time_price_wrapper .appstle_subscription_amount-appstle-sr-only",
+      ).textContent,
+      "Sale price $50.97",
+    );
+    // The Subscribe row is Appstle's — price, badge and markup untouched.
+    const subPrice = doc.querySelector(
+      ".appstle_subscription_price_wrapper .appstle_subscription_amount",
+    );
+    assert.equal(subPrice.textContent, "$47.98");
+    assert.equal(subPrice.querySelector(".dd-sale"), null);
+    assert.equal(
+      doc.querySelector(".subscription_discount").textContent,
+      "SAVE 20%",
+    );
+  } finally {
+    dom.window.close();
+  }
+});
+
+test("widget one-time row (WIDGET_TYPE_2) drops the app badge when Appstle fills its bundle pill late", async () => {
+  const dom = runPage(
+    PRODUCT_HTML_WIDGET_TYPE_2,
+    `https://biometheory.shop/products/${HANDLE}`,
+    baseSettings(),
+    basePrices(),
+  );
+  try {
+    const doc = dom.window.document;
+    const pick = () =>
+      doc.querySelector(
+        ".appstle_one_time_price_wrapper .appstle_subscription_amount",
+      );
+    // Appstle's pill is still an empty placeholder on load, so the app
+    // badge renders (the row would otherwise have no badge at all).
+    assert.ok(pick().querySelector(".dd-sale"), "expected the row rewritten on load");
+    assert.equal(pick().querySelector(".dd-badge").textContent, "Save 15%");
+    // Appstle fills its bundle pill after the app runs.
+    doc.querySelector(
+      ".appstle_bundle_discount_amount.one_time_discount",
+    ).textContent = "SAVE 15%";
+    await sleep(400);
+    // The observer re-run re-renders the row without the app badge.
+    assert.equal(pick().querySelector(".dd-sale").textContent, "$50.97");
+    assert.equal(pick().querySelector(".dd-orig").textContent, "$59.97");
+    assert.equal(pick().querySelector(".dd-badge"), null);
+    assert.equal(
+      doc.querySelector(
+        ".appstle_bundle_discount_amount.one_time_discount",
+      ).textContent,
+      "SAVE 15%",
+    );
+    // Subscribe row still untouched after the re-render.
+    const subPrice = doc.querySelector(
+      ".appstle_subscription_price_wrapper .appstle_subscription_amount",
+    );
+    assert.equal(subPrice.textContent, "$47.98");
+    assert.equal(subPrice.querySelector(".dd-sale"), null);
+  } finally {
+    dom.window.close();
+  }
+});
+
 // Enzymes / Probiotics 2 / Taste 2 render their own struck compare-at
 // (<s class="was">$59.97</s>) inside the price line, so the app's
 // .price-line .now rewrite added a second struck $59.97. The app now
