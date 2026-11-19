@@ -442,11 +442,44 @@
     if (!prices) return;
     var cfg = slotCfg("widgetOneTime");
     var selector = selectorList(slotSelectors("widgetOneTime"), null);
-    if (!selector) return;
-    document.querySelectorAll(selector).forEach(function (el) {
-      if (!isOneTimeWidgetPrice(el)) return;
-      applyWidgetOneTime(el, prices.o, prices.s, cfg, handled);
-    });
+    if (selector) {
+      document.querySelectorAll(selector).forEach(function (el) {
+        if (!isOneTimeWidgetPrice(el)) return;
+        applyWidgetOneTime(el, prices.o, prices.s, cfg, handled);
+      });
+    }
+    // Structural fallback: Appstle renders the one-time row differently
+    // in some widget variants, so the price span may not carry the
+    // configured .appstle_onetime_amount class at all — the selector
+    // above then finds nothing and the row is never rewritten. Find the
+    // one-time row by its radio (selling_plan value="") and rewrite the
+    // price span inside it. Only the one-time row is ever matched (the
+    // Subscribe row's radio carries a plan id, never ""), and only a span
+    // currently showing the one-time original/sale price is rewritten.
+    // The selector path and this path can both find the same span;
+    // applyWidgetOneTime's key + .dd-sale guard makes the second call
+    // a no-op, so nothing is ever rewritten twice.
+    document
+      .querySelectorAll('input[name="selling_plan"][value=""]')
+      .forEach(function (radio) {
+        var wrap = radio.closest
+          ? radio.closest(".appstle_input_wrapper, label")
+          : null;
+        if (!wrap || !wrap.querySelectorAll) return;
+        wrap
+          .querySelectorAll("span.appstle_sellingPlan_price")
+          .forEach(function (el) {
+            if (
+              el.classList &&
+              (el.classList.contains("appstle_onetime_amount_compare") ||
+                el.classList.contains("appstle_price_block"))
+            ) {
+              return;
+            }
+            if (!looksOneTime(el, prices.o, prices.s)) return;
+            applyWidgetOneTime(el, prices.o, prices.s, cfg, handled);
+          });
+      });
   }
 
   // Which purchase mode is this price element showing? Landing-page buy
@@ -897,17 +930,24 @@
   }
 
   var timers = [];
+  function safeRun() {
+    try {
+      run();
+    } catch (e) {}
+  }
   function later() {
     timers.forEach(clearTimeout);
     timers = [];
     // Theme JS (and Appstle's sellingPlanChanged burst) often rewrites the
     // price after our first pass — retry a few times, longer than the burst.
     [50, 150, 350, 700, 1200, 2000].forEach(function (ms) {
-      timers.push(setTimeout(run, ms));
+      timers.push(setTimeout(safeRun, ms));
     });
   }
 
-  run();
+  // Observer + listeners FIRST: they must stay active even if a run()
+  // throws. Previously a throw in run() skipped this setup entirely, so
+  // a widget rendered later by Appstle was never caught.
   new MutationObserver(function () {
     later();
   }).observe(document.body, {
@@ -919,4 +959,6 @@
   document.addEventListener("change", later, true);
   document.addEventListener("click", later, true);
   document.addEventListener("shopify:section:load", later);
+
+  safeRun();
 })();

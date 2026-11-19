@@ -532,3 +532,145 @@ test("custom CSS is injected and the app stays silent when disabled", () => {
     off.window.close();
   }
 });
+
+// The live failure: the Appstle widget's one-time row was not rewritten
+// even though the selector, settings and prices were all correct. The
+// structural fallback finds the one-time row by its radio (value="")
+// and rewrites the price span inside it, even when that span does not
+// carry the configured .appstle_onetime_amount class (some widget
+// variants render it without that class). The Subscribe row is never
+// touched: its radio carries a plan id and its price spans carry
+// .appstle_price_block.
+const PRODUCT_HTML_NO_ONETIME_CLASS = PRODUCT_HTML.replace(
+  'appstle_sellingPlan_price appstle_onetime_amount">$59.97</span>',
+  'appstle_sellingPlan_price">$59.97</span>',
+);
+
+test("widget one-time row is rewritten even when the price span lacks .appstle_onetime_amount", () => {
+  const dom = runPage(
+    PRODUCT_HTML_NO_ONETIME_CLASS,
+    `https://biometheory.shop/products/${HANDLE}`,
+    baseSettings(),
+    basePrices(),
+  );
+  try {
+    const doc = dom.window.document;
+    // The selector finds nothing now, so the structural fallback must
+    // have done the rewrite.
+    assert.equal(doc.querySelector(".appstle_onetime_amount"), null);
+    const oneTime = doc.querySelector(
+      ".appstle_input_wrapper .appstle_sellingPlan_price:not(.appstle_onetime_amount_compare)",
+    );
+    assert.ok(oneTime, "expected a one-time price span in the row");
+    assert.deepEqual(directPartOrder(oneTime), [
+      "dd-sale",
+      "dd-orig",
+      "dd-badge dd-badge--pill dd-badge--medium",
+    ]);
+    assert.equal(oneTime.querySelector(".dd-sale").textContent, "$50.97");
+    assert.equal(oneTime.querySelector(".dd-orig").textContent, "$59.97");
+    assert.equal(oneTime.querySelector(".dd-badge").textContent, "Save 15%");
+    // Appstle's own compare span is hidden while ours is shown.
+    const compare = doc.querySelector(".appstle_onetime_amount_compare");
+    assert.equal(compare.style.display, "none");
+    // The Subscribe row is Appstle's — prices, badge and markup untouched.
+    const subPrice = doc.querySelectorAll(".appstle_price_block")[1];
+    assert.equal(subPrice.textContent, "$47.98");
+    assert.equal(subPrice.querySelector(".dd-sale"), null);
+    assert.equal(
+      doc.querySelector(".appstle-save-badge").textContent,
+      "SAVE 20%",
+    );
+  } finally {
+    dom.window.close();
+  }
+});
+
+test("widget one-time row is rewritten when Appstle injects it late without the class", async () => {
+  const html = `
+  <div class="shopify-section">
+    <div class="product">
+      <div class="price">$59.97</div>
+      <form action="/cart/add">
+        <input type="hidden" name="id" value="${VARIANT}">
+        <input type="radio" name="selling_plan" value="" checked>
+        <input type="radio" name="selling_plan" value="6152224985">
+      </form>
+      <div id="appstle-slot"></div>
+    </div>
+  </div>`;
+  const dom = runPage(
+    html,
+    `https://biometheory.shop/products/${HANDLE}`,
+    baseSettings(),
+    basePrices(),
+  );
+  try {
+    const doc = dom.window.document;
+    await sleep(500);
+    // Appstle renders the widget late, and its one-time price span has
+    // no .appstle_onetime_amount class.
+    doc.getElementById("appstle-slot").innerHTML = `
+    <div class="appstle_subscription_wrapper">
+      <div class="appstle_input_wrapper">
+        <input type="radio" name="selling_plan" value="" checked>
+        <label>One-time purchase
+          <div class="appstle-selling-plan-detail-wrapper"><div class="appstle_span_wrapper">
+            <span class="appstle_lowercase appstle_sellingPlan_price appstle_onetime_amount_compare">$59.97</span>
+            <span class="appstle_lowercase appstle_sellingPlan_price">$59.97</span>
+          </div></div>
+        </label>
+      </div>
+      <div class="appstle_input_wrapper">
+        <input type="radio" name="selling_plan" value="6152224985">
+        <label>Subscribe &amp; Save
+          <div class="appstle-selling-plan-detail-wrapper"><div class="appstle_span_wrapper">
+            <span class="appstle_lowercase appstle_sellingPlan_formattedCompareAtPrice appstle_price_block">$59.97</span>
+            <span class="appstle_lowercase appstle_sellingPlan_price appstle_price_block">$47.98</span>
+          </div></div>
+          <strong class="appstle-save-badge">SAVE 20%</strong>
+        </label>
+      </div>
+    </div>`;
+    await sleep(400);
+    const oneTime = doc.querySelector(
+      ".appstle_input_wrapper .appstle_sellingPlan_price:not(.appstle_onetime_amount_compare):not(.appstle_price_block)",
+    );
+    assert.ok(oneTime, "expected a one-time price span after late injection");
+    assert.equal(oneTime.querySelector(".dd-sale").textContent, "$50.97");
+    assert.equal(oneTime.querySelector(".dd-badge").textContent, "Save 15%");
+    const subPrice = doc.querySelectorAll(".appstle_price_block")[1];
+    assert.equal(subPrice.textContent, "$47.98");
+    assert.equal(subPrice.querySelector(".dd-sale"), null);
+  } finally {
+    dom.window.close();
+  }
+});
+
+test("widget one-time row survives Appstle replacing the whole span, even without the class", async () => {
+  const dom = runPage(
+    PRODUCT_HTML_NO_ONETIME_CLASS,
+    `https://biometheory.shop/products/${HANDLE}`,
+    baseSettings(),
+    basePrices(),
+  );
+  try {
+    const doc = dom.window.document;
+    const pick = () =>
+      doc.querySelector(
+        ".appstle_input_wrapper .appstle_sellingPlan_price:not(.appstle_onetime_amount_compare)",
+      );
+    assert.ok(pick().querySelector(".dd-sale"), "expected the row rewritten on load");
+    // Appstle re-renders the widget: the whole span is replaced by a
+    // fresh one with no app markup and no data key.
+    const fresh = doc.createElement("span");
+    fresh.className = "appstle_lowercase appstle_sellingPlan_price";
+    fresh.textContent = "$59.97";
+    pick().parentNode.replaceChild(fresh, pick());
+    await sleep(400);
+    assert.equal(pick().querySelector(".dd-sale").textContent, "$50.97");
+    assert.equal(pick().querySelector(".dd-badge").textContent, "Save 15%");
+  } finally {
+    dom.window.close();
+  }
+});
