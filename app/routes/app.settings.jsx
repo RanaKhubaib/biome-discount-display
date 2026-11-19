@@ -84,7 +84,8 @@ export const action = async ({ request }) => {
   // Per-place display settings. A place that does not render its own
   // controls (badge-only places have no price order or colours) falls back
   // to the global badge / price settings above.
-  const globalSaleColor = String(f.get("saleColor") || "#d82c0d");
+  const globalSaleColor = String(f.get("saleColor") || "#000000");
+  const globalCompareColor = String(f.get("compareColor") || "#6b7280");
   const globalBadgeBg = String(f.get("badgeBg") || "#42572A");
   const globalBadgeColor = String(f.get("badgeColor") || "#ffffff");
   const globalBadgeStyle = String(f.get("badgeStyle") || "pill");
@@ -97,6 +98,9 @@ export const action = async ({ request }) => {
       showBadge: f.get(`slot_${id}_showBadge`) === "on",
       saleColor: String(
         f.get(`slot_${id}_saleColor`) || globalSaleColor,
+      ),
+      compareColor: String(
+        f.get(`slot_${id}_compareColor`) || globalCompareColor,
       ),
       badgeBg: String(f.get(`slot_${id}_badgeBg`) || globalBadgeBg),
       badgeColor: String(
@@ -115,6 +119,7 @@ export const action = async ({ request }) => {
     showOnProductPage: f.get("showOnProductPage") === "on",
     showOnLandingPages,
     saleColor: globalSaleColor,
+    compareColor: globalCompareColor,
     originalFirst: f.get("originalFirst") === "original",
     cardSelectors,
     productSelectors,
@@ -203,6 +208,9 @@ export default function Settings() {
   const [badgeBg, setBadgeBg] = useState(settings.badgeBg);
   const [badgeColor, setBadgeColor] = useState(settings.badgeColor);
   const [saleColor, setSaleColor] = useState(settings.saleColor);
+  const [compareColor, setCompareColor] = useState(
+    settings.compareColor || "#6b7280",
+  );
   const [originalFirst, setOriginalFirst] = useState(
     settings.originalFirst === true ? "original" : "sale",
   );
@@ -216,6 +224,7 @@ export default function Settings() {
         originalFirst: saved.originalFirst === true,
         showBadge: saved.showBadge !== false,
         saleColor: saved.saleColor || settings.saleColor,
+        compareColor: saved.compareColor || settings.compareColor || "#6b7280",
         badgeBg: saved.badgeBg || settings.badgeBg,
         badgeColor: saved.badgeColor || settings.badgeColor,
         badgeStyle: saved.badgeStyle || settings.badgeStyle,
@@ -480,6 +489,13 @@ export default function Settings() {
               "The colour of the discounted price in this place.",
             )}
             {renderColorField(
+              `slot_${def.id}_compareColor`,
+              slot.compareColor,
+              (value) => updateSlot(def.id, { compareColor: value }),
+              "Compare-at price colour",
+              "The colour of the struck-through original price in this place. It is always set explicitly, so the struck price can never pick up the sale colour from the element around it.",
+            )}
+            {renderColorField(
               `slot_${def.id}_badgeBg`,
               slot.badgeBg,
               (value) => updateSlot(def.id, { badgeBg: value }),
@@ -529,7 +545,7 @@ export default function Settings() {
     <span style={{ fontWeight: 600, color: saleColor }}>$50.97</span>
   );
   const previewOrig = (
-    <span style={{ opacity: 0.6 }}>
+    <span style={{ color: compareColor }}>
       <s>$59.97</s>
     </span>
   );
@@ -877,6 +893,13 @@ export default function Settings() {
                 setSaleColor,
                 "Sale price colour",
                 "The colour of the discounted price everywhere, unless a place below sets its own.",
+              )}
+              {renderColorField(
+                "compareColor",
+                compareColor,
+                setCompareColor,
+                "Compare-at price colour",
+                "The colour of the struck-through original price everywhere, unless a place below sets its own. Set explicitly so the struck price never inherits the sale colour.",
               )}
             </div>
           </s-section>

@@ -12,11 +12,15 @@
 // the global badge/price defaults from the app settings.
 //
 // What this app NEVER does: it does not manage subscriptions and it does
-// not touch Appstle's own badges or prices. Appstle's Subscribe row and
+// not rewrite Appstle's own prices or badges. Appstle's Subscribe row and
 // its badges are the owner's to design in Appstle. This app only rewrites
 // ONE-TIME prices (plus the static text that shows them), and its own
 // badges default to Appstle's badge design (#42572A background, white
-// text, pill) so the two look the same side by side.
+// text, pill) so the two look the same side by side. ONE exception, by
+// owner direction (v13): the Subscribe row's price COLOURS are recoloured
+// by CSS injection (sale black, compare grayish, values untouched) so the
+// row matches the one-time row. Colour only — no price value, badge,
+// layout or Appstle behaviour is ever changed by it.
 (function () {
   var D = window.DiscountDisplay;
   if (!D || !D.settings || !D.settings.enabled) return;
@@ -57,7 +61,14 @@
       .replace(/"/g, "&quot;");
   }
 
-  var saleColor = validHex(S.saleColor, "#d82c0d");
+  var saleColor = validHex(S.saleColor, "#000000");
+  // Compare-at colour. Set EXPLICITLY on every struck price the app
+  // renders (v13): the struck price used to inherit its colour from the
+  // element around it, and inside Appstle's widget rows that element is
+  // Appstle's own red price span — so the one-time row rendered BOTH
+  // prices red ("$50.97$59.97"). An explicit grayish colour at the source
+  // is the fix; the liquid fallback (.dd-orig) carries the same colour.
+  var compareColor = validHex(S.compareColor, "#6b7280");
   var badgeBg = validHex(S.badgeBg, "#42572A");
   var badgeColor = validHex(S.badgeColor, "#ffffff");
   var badgeStyleGlobal =
@@ -90,6 +101,72 @@
       document.head.appendChild(el);
     }
     if (el.textContent !== css) el.textContent = css;
+  }
+
+  // ---- Subscribe-row price colours (Appstle's row, colour only) -------
+  // The Subscribe row's prices are rendered by Appstle, not by this app,
+  // and this app never rewrites their VALUES. But the owner wants them
+  // black (sale) / grayish (compare), matching the one-time row — and
+  // Appstle renders the sale price red. The safe mechanism is a CSS
+  // override, driven by the app's own sale/compare settings (single
+  // source of truth, so a colour change in settings recolours this row
+  // too). Colour only: no value, badge, layout or display change, so
+  // Appstle's behaviour is untouched.
+  //
+  // Selectors are scoped to the SUBSCRIBE row's own wrappers, never to a
+  // bare Appstle class — both price classes below also occur in the
+  // one-time row's wrapper, which the app rewrites itself:
+  //   - WIDGET_TYPE_2: .appstle_subscription_price_wrapper holds the
+  //     subscribe .appstle_subscription_amount ($47.98) and
+  //     .appstle_subscription_amount_compare_at_price ($59.97). The
+  //     one-time row lives in .appstle_one_time_price_wrapper instead.
+  //   - Mustache template: the subscribe spans carry .appstle_price_block
+  //     (.appstle_sellingPlan_price / .appstle_sellingPlan_formatted-
+  //     CompareAtPrice); the one-time spans never do.
+  // The sr-only spans (.appstle_subscription_amount-appstle-sr-only) are
+  // different class tokens, so they are not matched by these selectors.
+  // !important is needed because Appstle's own widget CSS colours these
+  // spans; our selectors are more specific than a bare class rule and
+  // this <style> is appended after Appstle's, so it wins ties.
+  // If Appstle ever renames these classes, the rule silently stops
+  // matching and the row falls back to Appstle's own colours — it can
+  // never break a price value.
+  function injectSubscribePriceColors() {
+    var css =
+      ".appstle_subscription_price_wrapper .appstle_subscription_amount{color:" +
+      saleColor +
+      " !important}" +
+      ".appstle_subscription_price_wrapper .appstle_subscription_amount_compare_at_price{color:" +
+      compareColor +
+      " !important}" +
+      ".appstle_sellingPlan_price.appstle_price_block{color:" +
+      saleColor +
+      " !important}" +
+      ".appstle_sellingPlan_formattedCompareAtPrice.appstle_price_block{color:" +
+      compareColor +
+      " !important}";
+    var el = document.getElementById("dd-subscribe-price-colors");
+    if (!el) {
+      el = document.createElement("style");
+      el.id = "dd-subscribe-price-colors";
+      document.head.appendChild(el);
+    }
+    if (el.textContent !== css) el.textContent = css;
+  }
+
+  // querySelectorAll with a merchant-controlled selector list. A single
+  // invalid selector (e.g. a typo saved in settings) throws and would
+  // abort the whole run() — including the widget rewrite below it — so
+  // a bad selector here degrades to "that place shows nothing" instead
+  // of breaking every other place. Fixed internal selectors do not need
+  // this; only settings-driven ones do.
+  function qsa(root, selector) {
+    if (!selector) return [];
+    try {
+      return Array.prototype.slice.call(root.querySelectorAll(selector));
+    } catch (e) {
+      return [];
+    }
   }
 
   // ---- Per-slot display settings -------------------------------------
@@ -154,6 +231,7 @@
       originalFirst: S.originalFirst === true,
       showBadge: S.badgeEnabled !== false,
       saleColor: saleColor,
+      compareColor: compareColor,
       badgeBg: badgeBg,
       badgeColor: badgeColor,
       badgeStyle: badgeStyleGlobal,
@@ -169,6 +247,7 @@
       showBadge:
         typeof slot.showBadge === "boolean" ? slot.showBadge : base.showBadge,
       saleColor: validHex(slot.saleColor, base.saleColor),
+      compareColor: validHex(slot.compareColor, base.compareColor),
       badgeBg: validHex(slot.badgeBg, base.badgeBg),
       badgeColor: validHex(slot.badgeColor, base.badgeColor),
       badgeStyle:
@@ -191,6 +270,7 @@
       cfg.originalFirst ? "1" : "0",
       cfg.showBadge ? "1" : "0",
       cfg.saleColor,
+      cfg.compareColor,
       cfg.badgeBg,
       cfg.badgeColor,
       cfg.badgeStyle,
@@ -228,14 +308,27 @@
 
   // Sale price FIRST, then the struck original, then the badge — unless
   // this slot is set to show the original first.
+  // Both prices carry their colour INLINE (never inherited) and a 6px gap
+  // after each price (margin-right). The gap matters because two of the
+  // places this markup lands have no .dd-wrap around it — the widget
+  // one-time row (innerHTML is set directly) and CTA button text — so
+  // the liquid .dd-wrap spacing never applied there and the prices
+  // rendered cramped ("$50.97$59.97", and the same inside hero CTA
+  // buttons). 6px matches the liquid 6px .dd-wrap spacing, so wrapped
+  // and unwrapped prices lay out identically.
   function priceInnerHtml(o, s, cfg) {
     var sale =
       '<span class="dd-sale" style="color:' +
       cfg.saleColor +
-      '">' +
+      ';margin-right:6px">' +
       money(s) +
       "</span>";
-    var orig = '<s class="dd-orig">' + money(o) + "</s>";
+    var orig =
+      '<s class="dd-orig" style="color:' +
+      cfg.compareColor +
+      ';margin-right:6px">' +
+      money(o) +
+      "</s>";
     var badge = badgeHtml(o, s, cfg);
     return cfg.originalFirst ? orig + sale + badge : sale + orig + badge;
   }
@@ -288,7 +381,21 @@
   // one-time original gets the one-time sale, a token equal to the
   // subscribe price gets the subscribe sale. Nothing else is rewritten —
   // other numbers (e.g. "$2.40 a glass") are left alone.
-  function staticTargetFor(n, lp) {
+  // MODE-AWARE (v13): a CTA / section link is a shared display like the
+  // price line, not a per-row price — it shows the price for the
+  // SELECTED purchase mode. So when Subscribe is selected, a token equal
+  // to the one-time original ($59.97) maps to the subscribe sale
+  // ($47.98), not the one-time sale. Without this, hero links such as
+  // Taste 2's "Pick Your Flavor — $50.97" stayed on the one-time price
+  // after toggling to Subscribe.
+  function staticTargetFor(n, lp, mode) {
+    if (
+      mode === "subscribe" &&
+      lp.sp != null &&
+      Math.abs(n - lp.o) < 0.011
+    ) {
+      return { sale: lp.sp, pct: lp.spp || 0 };
+    }
     if (Math.abs(n - lp.o) < 0.011) {
       return { sale: lp.s, pct: lp.op || Math.round((1 - lp.s / lp.o) * 100) };
     }
@@ -306,13 +413,27 @@
     el.removeAttribute("data-dd-static-key");
   }
 
-  function applyStaticText(el, lp, cfg, handled) {
+  function applyStaticText(el, lp, cfg, handled, mode) {
     if (!lp || lp.s >= lp.o) {
       restoreStatic(el);
       return;
     }
+    // The selected mode is part of the key (v13): when the shopper
+    // toggles One-time <-> Subscribe the key changes, so the element is
+    // restored to its original text and re-derived from the new mode
+    // instead of the key guard returning early with the stale price.
     var key =
-      lp.o + "|" + lp.s + "|" + (lp.sp || "") + "|" + (lp.spp || "") + "|" + cfgSignature(cfg);
+      (mode || "") +
+      "|" +
+      lp.o +
+      "|" +
+      lp.s +
+      "|" +
+      (lp.sp || "") +
+      "|" +
+      (lp.spp || "") +
+      "|" +
+      cfgSignature(cfg);
     // Appstle / theme JS can wipe our spans by setting textContent; the
     // key survives that, so also require our markup to still be present.
     if (
@@ -347,7 +468,7 @@
       var nodeChanged = false;
       while ((m = re.exec(text))) {
         var n = parseFloat(m[0].slice(1).replace(/,/g, ""));
-        var target = staticTargetFor(n, lp);
+        var target = staticTargetFor(n, lp, mode);
         if (!target) continue;
         html += escapeHtml(text.slice(last, m.index));
         // priceInnerHtml derives the badge % from original/sale, which
@@ -498,6 +619,7 @@
       originalFirst: cfg.originalFirst,
       showBadge: false,
       saleColor: cfg.saleColor,
+      compareColor: cfg.compareColor,
       badgeBg: cfg.badgeBg,
       badgeColor: cfg.badgeColor,
       badgeStyle: cfg.badgeStyle,
@@ -528,7 +650,7 @@
     var cfg = slotCfg("widgetOneTime");
     var selector = selectorList(slotSelectors("widgetOneTime"), null);
     if (selector) {
-      document.querySelectorAll(selector).forEach(function (el) {
+      qsa(document, selector).forEach(function (el) {
         if (!isOneTimeWidgetPrice(el)) return;
         applyWidgetOneTime(el, prices.o, prices.s, cfg, handled);
       });
@@ -814,7 +936,7 @@
   // are never changed — just the number.
   function setPctInElements(selector, pct) {
     if (!(pct > 0) || !selector) return;
-    document.querySelectorAll(selector).forEach(function (el) {
+    qsa(document, selector).forEach(function (el) {
       var target = el.querySelector("span") || el;
       var html = target.innerHTML;
       if (!/(\d+(?:\.\d+)?)%/.test(html)) return;
@@ -923,6 +1045,7 @@
 
   function run() {
     injectCustomCss();
+    injectSubscribePriceColors();
     updateLandingBadges();
 
     // Elements a specific slot already rewrote this run — the global
@@ -935,7 +1058,7 @@
       var landingSelector = selectorList(slotSelectors("landing"), null);
       if (landingSelector && lp) {
         var landingCfg = slotCfg("landing");
-        document.querySelectorAll(landingSelector).forEach(function (el) {
+        qsa(document, landingSelector).forEach(function (el) {
           // The buy-box price line (.price-line .now) is a single shared
           // display, not a per-row price: it follows the SELECTED mode.
           // One-time selected shows the one-time sale; Subscribe selected
@@ -971,8 +1094,11 @@
       var ctaSelector = selectorList(slotSelectors("cta"), null);
       if (ctaSelector) {
         var ctaCfg = slotCfg("cta");
-        document.querySelectorAll(ctaSelector).forEach(function (el) {
-          applyStaticText(el, lp, ctaCfg, handled);
+        // CTA / section links are shared displays: they follow the
+        // selected purchase mode (v13), like the price line.
+        var ctaMode = landingSelectedMode();
+        qsa(document, ctaSelector).forEach(function (el) {
+          applyStaticText(el, lp, ctaCfg, handled, ctaMode);
         });
       }
     }
@@ -991,9 +1117,7 @@
         if (productSelector && prices) {
           var mode = productPageMode();
           var productCfg = slotCfg("product");
-          productForm.scope
-            .querySelectorAll(productSelector)
-            .forEach(function (el) {
+          qsa(productForm.scope, productSelector).forEach(function (el) {
               if (cardLinkFor(el)) return;
               // Subscribe: Appstle owns the price ($47.98 / Save 20%).
               // Restore anything we wrote and leave it alone.
@@ -1023,7 +1147,7 @@
       }
       if (cardSelector) {
         var cardCfg = slotCfg("card");
-        document.querySelectorAll(cardSelector).forEach(function (el) {
+        qsa(document, cardSelector).forEach(function (el) {
           var a = cardLinkFor(el);
           if (!a) return;
           var h = handleFromUrl(a.getAttribute("href"));
@@ -1042,7 +1166,7 @@
     var globalSelector = selectorList(slotSelectors("global"), null);
     if (globalSelector) {
       var globalCfg = slotCfg("global");
-      document.querySelectorAll(globalSelector).forEach(function (el) {
+      qsa(document, globalSelector).forEach(function (el) {
         maybeApplyGlobal(el, globalCfg, handled);
       });
     }

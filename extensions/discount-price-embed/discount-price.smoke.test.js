@@ -33,7 +33,8 @@ function baseSettings(overrides = {}) {
     showOnCards: true,
     showOnProductPage: true,
     showOnLandingPages: true,
-    saleColor: "#d82c0d",
+    saleColor: "#000000",
+    compareColor: "#6b7280",
     originalFirst: false,
     cardSelectors: [".price"],
     productSelectors: [".price"],
@@ -354,22 +355,24 @@ test("landing pages: buy box, price line, CTA buttons and pills go dynamic", asy
       doc.querySelector(".price-line").getAttribute("aria-label"),
       "Price: $47.98, was $59.97",
     );
-    // CTA button text: label kept, price token rewritten.
+    // CTA button text: label kept, price token rewritten. Subscribe is
+    // selected, so the shared CTA follows the selected mode (v13) and
+    // shows the subscribe sale — not the one-time sale.
     const cta = doc.querySelector('.cta-wrap a.btn[href="#buy"]');
     assert.match(cta.textContent, /Start With Your Gut/);
-    assert.equal(cta.querySelector(".dd-sale").textContent, "$50.97");
+    assert.equal(cta.querySelector(".dd-sale").textContent, "$47.98");
     assert.equal(cta.querySelector(".dd-orig").textContent, "$59.97");
-    assert.equal(cta.querySelector(".dd-badge").textContent, "Save 15%");
+    assert.equal(cta.querySelector(".dd-badge").textContent, "Save 20%");
     // ATC price spans: the $47.98 subscribe token gets the subscribe sale.
     const sticky = doc.querySelector(".sticky-price");
     assert.equal(sticky.querySelector(".dd-sale").textContent, "$47.98");
     assert.equal(sticky.querySelector(".dd-orig").textContent, "$59.97");
     assert.equal(sticky.querySelector(".dd-badge").textContent, "Save 20%");
     const final = doc.querySelector(".final-price");
-    assert.equal(final.querySelector(".dd-sale").textContent, "$50.97");
+    assert.equal(final.querySelector(".dd-sale").textContent, "$47.98");
     // Offer strip: price rewritten, the $2.40 per-glass figure untouched.
     const strip = doc.querySelector(".ostrip");
-    assert.equal(strip.querySelector(".dd-sale").textContent, "$50.97");
+    assert.equal(strip.querySelector(".dd-sale").textContent, "$47.98");
     assert.match(strip.textContent, /\$2\.40 a glass/);
     // Burst + CTA pills follow the SELECTED mode (subscribe = 20%).
     assert.match(doc.querySelector(".burst").textContent, /20%/);
@@ -409,6 +412,72 @@ test("landing pages: buy box, price line, CTA buttons and pills go dynamic", asy
       doc.querySelector(".price-line").getAttribute("aria-label"),
       "Price: $50.97, was $59.97",
     );
+    // Shared CTAs follow the toggle too (v13): back to the one-time sale.
+    const ctaAfter = doc.querySelector('.cta-wrap a.btn[href="#buy"]');
+    assert.equal(ctaAfter.querySelector(".dd-sale").textContent, "$50.97");
+    assert.equal(ctaAfter.querySelector(".dd-badge").textContent, "Save 15%");
+    assert.equal(
+      doc.querySelector(".final-price").querySelector(".dd-sale").textContent,
+      "$50.97",
+    );
+    assert.equal(
+      doc.querySelector(".ostrip").querySelector(".dd-sale").textContent,
+      "$50.97",
+    );
+  } finally {
+    dom.window.close();
+  }
+});
+
+test("landing pages: hero link follows the purchase-mode toggle both ways (v13)", async () => {
+  // Taste 2's hero CTA: <a class="btn" href="#buy" id="heroCta"> inside
+  // .cta-wrap. It stayed at the one-time price in Subscribe mode because
+  // the CTA rewrite was token-based, not mode-aware.
+  const html = `
+  <div class="shopify-section"><section class="bb gutter" id="buy">
+    <div class="cta-wrap">
+      <a class="btn" href="#buy" id="heroCta">Pick Your Flavor — $59.97</a>
+    </div>
+    <div class="price-line" aria-label="Price: $59.97, was $78.93">
+      <span class="now">$59.97</span><s class="was"></s>
+    </div>
+    <input type="radio" name="taste2-purchase" value="onetime">
+    <input type="radio" name="taste2-purchase" value="subscribe" checked>
+  </section></div>`;
+  const dom = runPage(
+    html,
+    "https://biometheory.shop/pages/biome-taste-2",
+    baseSettings(),
+    basePrices(),
+    (window) => {
+      window.document.body.dataset.flavor = "mango";
+      window.TASTE2_PRODUCTS = { mango: { variant: VARIANT } };
+    },
+  );
+  try {
+    const doc = dom.window.document;
+    const hero = doc.querySelector("#heroCta");
+    // Subscribe selected on load: hero shows the subscribe sale.
+    assert.equal(hero.querySelector(".dd-sale").textContent, "$47.98");
+    assert.equal(hero.querySelector(".dd-orig").textContent, "$59.97");
+    assert.equal(hero.querySelector(".dd-badge").textContent, "Save 20%");
+    assert.match(hero.textContent, /Pick Your Flavor/);
+
+    // Toggle to One-time: hero re-derives to the one-time sale.
+    doc.querySelector('input[name="taste2-purchase"][value="onetime"]').checked = true;
+    doc.querySelector('input[name="taste2-purchase"][value="subscribe"]').checked = false;
+    doc.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+    await sleep(150);
+    assert.equal(hero.querySelector(".dd-sale").textContent, "$50.97");
+    assert.equal(hero.querySelector(".dd-badge").textContent, "Save 15%");
+
+    // Toggle back to Subscribe: hero returns to the subscribe sale.
+    doc.querySelector('input[name="taste2-purchase"][value="subscribe"]').checked = true;
+    doc.querySelector('input[name="taste2-purchase"][value="onetime"]').checked = false;
+    doc.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+    await sleep(150);
+    assert.equal(hero.querySelector(".dd-sale").textContent, "$47.98");
+    assert.equal(hero.querySelector(".dd-badge").textContent, "Save 20%");
   } finally {
     dom.window.close();
   }
@@ -985,6 +1054,186 @@ test("landing price line shows exactly one struck price when the theme already h
         .length,
       1,
     );
+  } finally {
+    dom.window.close();
+  }
+});
+
+// v13 — black sale / grayish compare / 6px gap / badge colours.
+// DEFECT: the one-time row rendered BOTH prices red and cramped
+// ("$50.97$59.97"). Root cause: the struck .dd-orig had no colour of its
+// own, so it inherited the red of Appstle's price span it sits inside,
+// and the widget row + CTA text get no .dd-wrap, so the liquid .dd-wrap
+// spacing never applied there. Fix: explicit inline colours on both
+// prices + a 6px margin after each price, everywhere the app renders.
+test("v13 colours: sale black, compare grayish, 6px gap, badge white on dark green", () => {
+  const dom = runPage(
+    PRODUCT_HTML,
+    `https://biometheory.shop/products/${HANDLE}`,
+    baseSettings(),
+    basePrices(),
+  );
+  try {
+    const doc = dom.window.document;
+    const price = doc.querySelector(".price");
+    const sale = price.querySelector(".dd-sale");
+    const orig = price.querySelector(".dd-orig");
+    const badge = price.querySelector(".dd-badge");
+    assert.equal(sale.textContent, "$50.97");
+    assert.match(sale.getAttribute("style"), /color:#000000/);
+    assert.match(sale.getAttribute("style"), /margin-right:6px/);
+    assert.equal(orig.textContent, "$59.97");
+    assert.match(orig.getAttribute("style"), /color:#6b7280/);
+    assert.match(orig.getAttribute("style"), /margin-right:6px/);
+    // The badge is the app's own, from the settings: dark green bg,
+    // white text — the single source of truth for badge colours.
+    assert.match(badge.getAttribute("style"), /background:#42572a/i);
+    assert.match(badge.getAttribute("style"), /color:#ffffff/);
+    // No red anywhere in the rendered price.
+    assert.doesNotMatch(price.innerHTML, /#d82c0d/);
+  } finally {
+    dom.window.close();
+  }
+});
+
+test("v13 widget one-time row: compare grayish not red, gap present, exactly one badge", () => {
+  const dom = runPage(
+    PRODUCT_HTML_WIDGET_TYPE_2_BUNDLE_BADGE,
+    `https://biometheory.shop/products/${HANDLE}`,
+    baseSettings(),
+    basePrices(),
+  );
+  try {
+    const doc = dom.window.document;
+    const oneTime = doc.querySelector(
+      ".appstle_one_time_price_wrapper .appstle_subscription_amount",
+    );
+    assert.ok(oneTime, "expected a one-time price span in the row");
+    assert.deepEqual(directPartOrder(oneTime), ["dd-sale", "dd-orig"]);
+    const sale = oneTime.querySelector(".dd-sale");
+    const orig = oneTime.querySelector(".dd-orig");
+    assert.equal(sale.textContent, "$50.97");
+    assert.match(sale.getAttribute("style"), /color:#000000/);
+    assert.match(sale.getAttribute("style"), /margin-right:6px/);
+    assert.equal(orig.textContent, "$59.97");
+    assert.match(orig.getAttribute("style"), /color:#6b7280/);
+    assert.match(orig.getAttribute("style"), /margin-right:6px/);
+    assert.doesNotMatch(oneTime.innerHTML, /#d82c0d/);
+    // No app badge in this row — the row's ONE badge is Appstle's own
+    // left pill ("SAVE 15%").
+    assert.equal(oneTime.querySelector(".dd-badge"), null);
+    const option = doc.querySelector(
+      ".appstle_subscription_wrapper_option__one_time",
+    );
+    assert.equal(
+      option.querySelector(
+        ".appstle_bundle_discount_amount.one_time_discount",
+      ).textContent,
+      "SAVE 15%",
+    );
+    assert.equal(option.querySelectorAll(".dd-badge").length, 0);
+  } finally {
+    dom.window.close();
+  }
+});
+
+test("v13 subscribe row: colours come from CSS injection, values untouched", () => {
+  const dom = runPage(
+    PRODUCT_HTML_WIDGET_TYPE_2,
+    `https://biometheory.shop/products/${HANDLE}`,
+    baseSettings(),
+    basePrices(),
+  );
+  try {
+    const doc = dom.window.document;
+    // The app injects one <style> for the Subscribe row's colours,
+    // scoped to the subscribe wrapper only and driven by the settings.
+    const style = doc.getElementById("dd-subscribe-price-colors");
+    assert.ok(style, "expected the subscribe-price-colours style element");
+    assert.match(
+      style.textContent,
+      /\.appstle_subscription_price_wrapper \.appstle_subscription_amount\{color:#000000 !important\}/,
+    );
+    assert.match(
+      style.textContent,
+      /\.appstle_subscription_price_wrapper \.appstle_subscription_amount_compare_at_price\{color:#6b7280 !important\}/,
+    );
+    // The Subscribe row's VALUES are Appstle's and unchanged — no app
+    // markup inside them, and the sr-only text is untouched too.
+    const subPrice = doc.querySelector(
+      ".appstle_subscription_price_wrapper .appstle_subscription_amount",
+    );
+    assert.equal(subPrice.textContent, "$47.98");
+    assert.equal(subPrice.querySelector(".dd-sale"), null);
+    assert.equal(subPrice.querySelector(".dd-orig"), null);
+    const subCompare = doc.querySelector(
+      ".appstle_subscription_price_wrapper .appstle_subscription_amount_compare_at_price",
+    );
+    assert.equal(subCompare.textContent, "$59.97");
+    assert.equal(
+      doc.querySelector(
+        ".appstle_subscription_price_wrapper .appstle_subscription_amount-appstle-sr-only",
+      ).textContent,
+      "Sale price $47.98",
+    );
+    assert.equal(
+      doc.querySelector(".subscription_discount").textContent,
+      "SAVE 20%",
+    );
+    // The one-time row is NOT recoloured by this injection — it is
+    // rewritten by the app itself, so it must not match these rules.
+    assert.doesNotMatch(
+      style.textContent,
+      /appstle_one_time_price_wrapper/,
+    );
+  } finally {
+    dom.window.close();
+  }
+});
+
+test("v13: no hardcoded price, % or sale colour in the storefront script code", () => {
+  // Comments describe the live prices ($50.97 etc.) — strip them, then
+  // the executable code must contain no price, % or old red colour at
+  // all, so a Nov 26 / Dec 2 change can never leave a stale value in
+  // the script. Every price/% on the page comes from the synced
+  // metafield (selected discount / selling plan) or the settings.
+  const code = scriptSrc
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/(^|\s)\/\/.*$/gm, "$1");
+  assert.doesNotMatch(code, /\$\s?\d/);
+  assert.doesNotMatch(code, /\b(50\.97|59\.97|47\.98|78\.93|12\.99|67\.97)\b/);
+  assert.doesNotMatch(code, /#d82c0d/);
+  assert.doesNotMatch(code, /Save 15%|Save 20%|SAVE 15%|SAVE 20%/);
+  assert.doesNotMatch(code, /"15"|"20"/);
+});
+
+test("v13: an invalid selector in settings degrades that place only, it does not abort the run", async () => {
+  // A typo'd selector used to throw inside querySelectorAll and abort
+  // run() — the widget rewrite and everything after it never ran.
+  const settings = baseSettings({
+    landingSelectors: ["[broken"],
+  });
+  const dom = runPage(
+    LANDING_HTML,
+    "https://biometheory.shop/pages/biome-gut-first",
+    settings,
+    basePrices(),
+    (window) => {
+      window.document.body.dataset.flavor = "mango";
+      window.GF_PRODUCTS = { mango: { variant: VARIANT } };
+    },
+  );
+  try {
+    const doc = dom.window.document;
+    await sleep(150);
+    // The buy-box price was not rewritten (its selector is invalid) —
+    // but the run continued: the shared CTA still follows the mode.
+    const buyPrice = doc.querySelector(
+      '.purchase-opt[data-purchase-opt="onetime"] .purchase-price',
+    );
+    assert.equal(buyPrice.querySelector(".dd-wrap"), null);
+    const cta = doc.querySelector('.cta-wrap a.btn[href="#buy"]');
+    assert.equal(cta.querySelector(".dd-sale").textContent, "$47.98");
   } finally {
     dom.window.close();
   }

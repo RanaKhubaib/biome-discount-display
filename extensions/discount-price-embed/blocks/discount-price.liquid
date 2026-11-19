@@ -5,10 +5,15 @@
   <style>
     /* Price order is sale first, then the struck original, then the badge
        (or original first when a slot is set that way) — spacing is between
-       the parts, whichever order they render in. */
-    .dd-wrap > * { margin-right: 0.4em; }
+       the parts, whichever order they render in. The 6px gap matches the
+       6px inline margin the script puts on .dd-sale/.dd-orig, so prices
+       lay out identically with and without a .dd-wrap. */
+    .dd-wrap > * { margin-right: 6px; }
     .dd-wrap > *:last-child { margin-right: 0; }
-    .dd-orig { opacity: 0.6; }
+    /* Fallback compare colour when the script's inline style is absent:
+       the struck price must never inherit the sale colour from the
+       element around it (that is what made both widget-row prices red). */
+    .dd-orig { color: #6b7280; }
     .dd-sale { font-weight: 600; }
     .dd-badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: .72rem; font-weight: 800; letter-spacing: .04em; vertical-align: 2px; white-space: nowrap; }
     .dd-badge--rounded { border-radius: 6px; }

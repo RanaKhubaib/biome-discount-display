@@ -357,6 +357,14 @@ test("loadSettings builds a slot for every place, with the new defaults", async 
   assert.equal(loaded.slots.product.badgeBg, null);
 });
 
+test("defaults are black sale / grayish compare, badge white on dark green", async () => {
+  const loaded = await loadSettings(settingsAdmin(null));
+  assert.equal(loaded.saleColor, "#000000");
+  assert.equal(loaded.compareColor, "#6b7280");
+  assert.equal(loaded.badgeBg, "#42572A");
+  assert.equal(loaded.badgeColor, "#ffffff");
+});
+
 test("loadSettings migrates the old landing default to include the price line", async () => {
   const loaded = await loadSettings(
     settingsAdmin({
@@ -388,6 +396,7 @@ test("loadSettings preserves saved per-slot display settings", async () => {
           originalFirst: true,
           showBadge: false,
           saleColor: "#111111",
+          compareColor: "#333333",
           badgeBg: "#222222",
           badgeColor: "#eeeeee",
           badgeStyle: "square",
@@ -401,6 +410,7 @@ test("loadSettings preserves saved per-slot display settings", async () => {
     originalFirst: true,
     showBadge: false,
     saleColor: "#111111",
+    compareColor: "#333333",
     badgeBg: "#222222",
     badgeColor: "#eeeeee",
     badgeStyle: "square",
@@ -409,6 +419,7 @@ test("loadSettings preserves saved per-slot display settings", async () => {
   // Slots the merchant never touched still inherit the globals.
   assert.equal(loaded.slots.card.showBadge, true);
   assert.equal(loaded.slots.card.badgeBg, null);
+  assert.equal(loaded.slots.card.compareColor, null);
 });
 
 test("loadSettings keeps an explicitly emptied selector list empty (slot off)", async () => {

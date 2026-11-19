@@ -33,6 +33,8 @@ function normalizeSlot(saved) {
     originalFirst: s.originalFirst === true,
     showBadge: s.showBadge !== false,
     saleColor: validHex(s.saleColor, null),
+    // Compare-at colour. Null = inherit the global compare colour.
+    compareColor: validHex(s.compareColor, null),
     badgeBg: validHex(s.badgeBg, null),
     badgeColor: validHex(s.badgeColor, null),
     badgeStyle: BADGE_STYLES.includes(s.badgeStyle) ? s.badgeStyle : null,
@@ -229,7 +231,12 @@ export const DEFAULT_SETTINGS = {
   showOnCards: true,
   showOnProductPage: true,
   showOnLandingPages: true,
-  saleColor: "#d82c0d",
+  saleColor: "#000000",
+  // Compare-at (struck original) colour. The struck price must never
+  // inherit the sale colour: inside Appstle's widget rows the app's
+  // struck price sits inside Appstle's own (red) price span, so without
+  // an explicit colour it rendered red too (v13 defect).
+  compareColor: "#6b7280",
   // Global price layout: false = sale price first, then the struck
   // original, then the badge (the Appstle layout). True = original first.
   // Each slot can override this for its own place.
@@ -383,6 +390,10 @@ export async function loadSettings(admin) {
     badgeBg: validHex(saved.badgeBg, DEFAULT_SETTINGS.badgeBg),
     badgeColor: validHex(saved.badgeColor, DEFAULT_SETTINGS.badgeColor),
     saleColor: validHex(saved.saleColor, DEFAULT_SETTINGS.saleColor),
+    compareColor: validHex(
+      saved.compareColor,
+      DEFAULT_SETTINGS.compareColor,
+    ),
     originalFirst: saved.originalFirst === true,
     showOnLandingPages: saved.showOnLandingPages !== false,
     cardSelectors: getSelectors(
