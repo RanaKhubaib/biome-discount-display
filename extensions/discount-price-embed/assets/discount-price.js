@@ -69,10 +69,15 @@
   //      plus `border: 1px solid currentColor` — pale green text on white
   //      with a pale green border. (Verified in Appstle's JS/CSS.)
   //  (b) the ROW pill on the Subscribe option:
-  //      <span class="appstle-save-badge">, styled via CSS variables
-  //      (--as-badge-bg) and Appstle's merchant custom CSS
-  //      `span.appstle-save-badge { background-color: #78F39D !important; }`.
-  //      (Verified in Appstle's JS/CSS and the live page HTML.)
+  //      <strong class="appstle-save-badge"> — NOTE it is a <strong>,
+  //      NOT a <span>. The v5 selector used span.appstle-save-badge
+  //      (copied from Appstle's merchant custom CSS, whose
+  //      span.appstle-save-badge rule also never matches the live pill),
+  //      so it never matched and the pill stayed pale. The pale fill
+  //      comes from the unqualified .appstle-save-badge rule (#78F39D)
+  //      and the --as-badge-bg variable (#5a941d39).
+  //      (Verified in Appstle's JS template — two occurrences, both
+  //      <strong> — and the live page HTML; zero <span> occurrences.)
   // Both are restyled here. Only colours + corner radius are changed;
   // position, size and layout are left to Appstle, and the badge text,
   // prices and widget behaviour are never touched.
@@ -87,8 +92,13 @@
   // pill. Setting border-color to the badge background blends that 1px
   // border into the pill (a colour-only change; the border itself, and
   // the element's layout, are untouched).
+  // Use UNQUALIFIED class selectors (no `span` element qualifier):
+  // the row pill is a <strong>, the main-price badge is a <span>, and
+  // the template pill's tag is unverified — the class alone matches all
+  // of them regardless of tag. (The v5 span-qualified selector is what
+  // left the row pill pale: it never matched the <strong>.)
   var APPSTLE_BADGE_SELECTOR =
-    "span.appstle_subscription_save, span.appstle-save-badge, span.appstle_sellingPlan_discountText";
+    ".appstle_subscription_save, .appstle-save-badge, .appstle_sellingPlan_discountText";
   function injectAppstleBadgeCss() {
     if (!S.badgeEnabled) return;
     var el = document.getElementById("dd-appstle-badge");
