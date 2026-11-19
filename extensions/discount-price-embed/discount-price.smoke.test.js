@@ -415,6 +415,46 @@ test("landing pages: buy box, price line, CTA buttons and pills go dynamic", asy
   }
 });
 
+test("landing pages: an old saved landing list still gets the price line", () => {
+  // Saved settings from before the price line existed hold only the old
+  // default selector. The script appends .price-line .now itself, so the
+  // price line goes dynamic without waiting for a settings save.
+  const settings = baseSettings({
+    landingSelectors: [
+      '.purchase-opt[data-purchase-opt="onetime"] .purchase-price',
+    ],
+  });
+  const html = `
+  <div class="shopify-section"><section class="bb gutter" id="buy">
+    <div class="price-line" aria-label="Price: $59.97, was $78.93">
+      <span class="now">$59.97</span><s class="was"></s>
+    </div>
+    <input type="radio" name="gf-purchase" value="onetime" checked>
+  </section></div>`;
+  const dom = runPage(
+    html,
+    "https://biometheory.shop/pages/biome-gut-first",
+    settings,
+    basePrices(),
+    (window) => {
+      window.document.body.dataset.flavor = "mango";
+      window.GF_PRODUCTS = { mango: { variant: VARIANT } };
+    },
+  );
+  try {
+    const doc = dom.window.document;
+    const now = doc.querySelector(".price-line .now");
+    assert.equal(now.querySelector(".dd-sale").textContent, "$50.97");
+    assert.equal(now.querySelector(".dd-badge").textContent, "Save 15%");
+    assert.equal(
+      doc.querySelector(".price-line").getAttribute("aria-label"),
+      "Price: $50.97, was $59.97",
+    );
+  } finally {
+    dom.window.close();
+  }
+});
+
 test("global catch-all rewrites only what no specific slot claimed", () => {
   const settings = baseSettings({
     globalSelectors: [".weird-price"],

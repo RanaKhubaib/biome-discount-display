@@ -130,7 +130,22 @@
   function slotSelectors(id) {
     var key = SLOT_SELECTOR_KEYS[id];
     var list = key ? S[key] : null;
-    if (Array.isArray(list) && list.length) return list;
+    if (Array.isArray(list) && list.length) {
+      // Saved settings that still hold the old landing default (from
+      // before the buy-box price line was added) get the price line
+      // appended — the same migration the server applies on save — so
+      // the price line goes dynamic without waiting for a settings save.
+      // A merchant-edited list is left exactly as saved.
+      if (
+        id === "landing" &&
+        list.length === 1 &&
+        list[0] ===
+          '.purchase-opt[data-purchase-opt="onetime"] .purchase-price'
+      ) {
+        return list.concat([".price-line .now"]);
+      }
+      return list;
+    }
     return SLOT_SELECTOR_DEFAULTS[id] || [];
   }
 

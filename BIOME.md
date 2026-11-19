@@ -192,9 +192,27 @@ What changed:
    line / CTA / pills with a mode switch, global catch-all (incl. no
    double-rewrite), custom CSS + disabled state. Production build OK.
 
-DEPLOY: (pending — fill in after `shopify app deploy` + CDN check)
-- Extension version: biome-discount-display-6 (expected)
-- GitHub commit: (this push)
+DEPLOY:
+- Push 1: GitHub commit e3fa7030d67326a20e4b0174c896da7a4933732b (main,
+  provenance checked: remote head was 6d6a66c063e6ea083628e7e15cfb0387279c4ade
+  — NOTE the brief said head 17d9ecf2, but live head was one commit ahead,
+  6d6a66c "Fix row pill restyle"; remote content matched local git HEAD
+  byte-for-byte on every path, no divergence). Deployed via
+  `shopify app deploy` (CLI reinstalled, PTY): extension version
+  biome-discount-display-7,
+  https://dev.shopify.com/dashboard/140278598/apps/449145503745/versions/1247810387969
+  . CDN-verified: pilot preview loads
+  .../biome-discount-display-7/assets/discount-price.js (31,649 bytes),
+  SHA-256 identical to the local file; all new markers present, all
+  Appstle-restyle markers gone. (The live saved settings in the
+  metafield differ from the brief: badgeStyle "square", badgeSize
+  "large", saleColor "#000000" — preserved as saved, NOT changed; the
+  app defaults are still pill/medium/#d82c0d. Owner call if those should
+  change. The saved landingSelectors also still hold the old default —
+  the script now appends .price-line .now itself, see push 2.)
+- Push 2: script-side landing migration (old saved landing list gets
+  .price-line .now without a settings save) + smoke test for it.
+  Deploy pending — expected version biome-discount-display-8.
 - Live browser verification still needed (parent): product page
   one-time row ($50.97 + struck $59.97 + Save 15% badge, same size as
   Appstle's Subscribe badge), Subscribe row untouched, all 8 landing
