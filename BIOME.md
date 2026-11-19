@@ -156,7 +156,121 @@ SHA-256 identical to local (c7e7feb7...), structural-fallback markers
 present, Appstle-restyle markers 0. Deploy note: the CLI sat silent at
 the release prompt for ~6 min (no log output) until Up+Enter was sent —
 the prompt is the only interactive step; if a future deploy looks hung,
-send Up+Enter rather than assuming it failed.
+send Up+Enter rather than assuming it failed. (v15: `shopify app deploy
+--allow-updates` releases non-interactively with no prompt at all —
+preferred for agent deploys; the first attempt with `script -qec` +
+`tail` went to a runtime pending-confirmation and was killed.)
+
+## v15 — ID-scoped Subscribe-row colours, static-text price group keeps a following comma attached (2026-11-19, app + theme)
+
+The v14 re-check tour (browser-task:f8302b0b, 12:04–12:13 PKT) PASSED 7 of
+8 checks. One failure remained (product-page Subscribe row still red)
+plus two small items (Caffeine Free hero comma, GH2/PB2 hero wrapping).
+All three are fixed here. Nothing published; live MAIN untouched; no
+discount / Appstle plan / price value changed.
+
+FIX 1 — PRODUCT-PAGE SUBSCRIBE ROW STILL RED. The v14 injection used
+the real wrapper classes but still lost live.
+ROOT CAUSE (verified against the live pilot product page HTML via curl,
+not guessed): Appstle's own stylesheet colours the subscribe sale with
+an ID-scoped rule — `:is(#appstle_subscription_widget0,
+[id^="appstle_subscription_widget"]):where(.appstle_sub_widget):where
+(.WIDGET_TYPE_1, .WIDGET_TYPE_2, ...) .appstle_subscription_amount {
+color: var(--as-price-color, rgb(26,26,26)) !important; }` — specificity
+(1,1,0) (`:is()` takes the max specificity of its arguments, the ID).
+And `--as-price-color` is set to `#ff0303` (red) in Appstle's theme
+settings (the CSS-variables block in the page). The v14 two-class rules
+(0,2,0) lost to (1,1,0), so the row stayed red under Appstle's own rule
+— NOT under the merchant's single-class `#ff0000` rule (which the v14
+rules already beat). The compare is the same story: Appstle's own
+(1,1,0) rule resolves `--as-compare` (#535353), so the v14 compare rule
+also lost; it only looked right because #535353 happens to be grayish.
+The one-time row works because the app replaces its innerHTML with its
+own spans (inline colours) — Appstle's rules never match them.
+FIX (discount-price.js, `injectSubscribePriceColors` only): the same
+`:is(#appstle_subscription_widget0, [id^="appstle_subscription_widget"])`
+scoping Appstle uses, plus the wrapper class — (1,2,0) — so the rules
+win regardless of style order, for the sale AND the compare
+(WIDGET_TYPE_2 and Mustache). The unscoped two-class rules are kept as
+a fallback (they beat the merchant's single-class #ff0000 rule if
+Appstle ever renames the widget id). Colour only; values/badge
+untouched; one-time row untouched. The v14 test fixture already used
+Appstle's real subscribe markup — the bug was specificity, not the
+selector this time.
+
+FIX 2 — CAFFEINE FREE HERO BUTTON COMMA. The hero renders "Save 20% ,
+Free Shipping" (space before the comma).
+ROOT CAUSE: `.btn` is `display:inline-flex` with `gap:10px`. The app's
+`applyStaticText` replaced the `$59.97` token with sale + struck +
+badge spans, leaving the bare `, Free Shipping` text node as a separate
+anonymous flex item — so the 10px flex gap appears BEFORE the comma.
+(The button's textContent reads "Save 20%, Free Shipping" with no
+space; the gap is visual only, which is why the tour's item 6 and its
+minor observation disagreed.)
+FIX (discount-price.js, `applyStaticText` only): the expanded price is
+wrapped in one inline span (`.dd-static-price`, `display:inline;
+white-space:nowrap`, added to the liquid block) so a flex button's gap
+cannot split the price parts — and a leading punctuation character
+(`,`, `;`, `:`) right after the replaced token is moved INSIDE the
+wrapper, directly after the badge. The rest of the trailing text
+(` Free Shipping`) stays outside. Rendered: "Save 20%, Free Shipping"
+(the 10px gap now falls after the comma, where a space belongs). As a
+side effect the price parts inside the wrapper use only their 6px
+inline margins (not 6px + the button's 10px flex gap), matching the
+intended 6px gap everywhere else.
+
+FIX 3 — GH2 / PB2 HERO BUTTONS WRAPPING (theme, pilot draft only).
+GH2's hero ("Try Gut-First Greens — …") and PB2's ("Get Super Greens —
+…") still wrapped at 1920px desktop. Same root cause as v14's Taste 2 /
+CF fix, which only touched those two pages: the hero CTA container is
+420px and the app expands the price to ~45 chars. GH2's hero is
+`section.vh` (container `.vh-cta`, 420px); PB2's is `section.ph-hero`
+(container `.ph-hero .cta-wrap`, 420px). Font is Plus Jakarta Sans
+(wide at 800 weight). FIX (2 files, 2/2 SHA MATCH): both containers
+420px → 560px + hero-button `font-size:1rem; padding:0 24px;
+text-wrap:balance` + `white-space:nowrap` inside `@media
+(min-width:768px)` only (mirrors v14). All 8 hero buttons checked:
+Enzymes ("Add to Cart", label only), Mom Story ("Try the Formula My
+Mom Drinks", label only), Gut First + Routine (no hero section), Taste
+2 + CF (v14, pass) — no fix needed. Mobile still wraps (balanced).
+
+TESTS (run 2026-11-19): node --check OK; smoke 30/30 (28 existing + 2
+new: v15 ID-scoped injection rules present + unscoped fallback kept,
+values untouched; v15 static-text group + comma attached, both modes);
+discount-sync 15/15; production build OK. Script 51,926 bytes,
+SHA-256 30ed8ebd3289e7d6d2a680c8c5d2e7cb92efae42681a37eadc920254c9156d5e.
+PUSH: GitHub commit f2233e6c2f2e32bfa9787a5464fd4bc82d1080b4 on main
+(3 files, push_files only, provenance-checked: remote head was
+75392a64, matching the sync record; sync bases b1693ba0 for the script
++ test, e3fa7030 for the liquid; read back byte-identical, SHA-256
+match; sync record updated, 17 entries). NOTE — liquid divergence
+reconciled: the remote liquid file at its sync base (e3fa7030) was
+PRE-v13 (`.dd-wrap` 0.4em, `.dd-orig` opacity 0.6) — the v13 liquid
+changes (6px gap, #6b7280 compare fallback) were deployed via the CLI
+but never pushed to GitHub in v13/v14. No other writer touched it; the
+local file is the live deployed version + v15, so this push brings
+GitHub in sync with the live extension (fast-forward, not an
+overwrite). DEPLOY: extension biome-discount-display-15
+(https://dev.shopify.com/dashboard/140278598/apps/449145503745/versions/1248083116033),
+released with `shopify app deploy --allow-updates` (non-interactive;
+the earlier `script -qec` attempt went to a runtime
+pending-confirmation and was killed — do not use `script`+`tail` for
+deploys, the tail buffers all output). Vercel /health 200 "ok". CDN
+byte-check PASSED on the first fetch: pilot preview product page loads
+.../biome-discount-display-15/assets/discount-price.js (51,926 bytes),
+SHA-256 identical to local (30ed8ebd…); markers
+appstle_subscription_widget0 ×2, dd-static-price ×2,
+appstle_subscription_price_wrapper ×1 (comment only), #d82c0d ×1
+(comment only). Theme curl: GH2 + PB2 pilot previews serve the new
+560px + nowrap rules, 0× the old 420px rules.
+Parent runs it next: product-page Subscribe row $47.98 BLACK + $59.97
+struck grayish with a gap, values/badge unchanged, first load +
+reload, both modes; CF hero "Save 20%, Free Shipping" with no space
+before the comma, both modes; GH2 + PB2 hero buttons one-line at
+1920px desktop, both modes. Live browser verification is the only
+check jsdom cannot do (it cannot compute colours) — the colour
+assertions rest on the injected rule text (specificity (1,2,0) +
+!important beating Appstle's (1,1,0)).
 
 ## v14 — Real Subscribe-row selectors, mode-direct final CTA, buy-heading % follows toggle (2026-11-19, app phase only)
 
@@ -265,6 +379,82 @@ show Save 15% in One-time mode, Save 20% in Subscribe mode. Live
 browser verification is the only check jsdom cannot do (it cannot
 compute colours) — the colour assertions rest on the injected rule text
 (specificity + !important beating the red rules).
+
+## v14 (part 2) — Theme: Taste 2 flavour cards neon, hero-button wrap fix, large price line on 4 pages (2026-11-19, theme phase only, pilot draft only)
+
+Pilot draft 169102147801 only; live MAIN untouched, nothing published,
+no discount / Appstle / price value changed. 9 files, 9/9 SHA-256 MATCH
+on upload. Final CTA markup, "Save 20% + Free Shipping" headings and
+buy-box row markup untouched (app worker's selectors intact).
+
+FIX 4 — TASTE 2 FLAVOUR CARDS NEON. Root cause: Taste 2's flavour cards
+are `.fcard` articles in `biome-taste-2-buy.liquid`, NOT the `.flav`
+buttons the other pages use — so the v13 `.flav` neon restyle never
+applied. The orange/red strip is `.fcard { border-top:8px solid var(--c)
+}` in `sections/biome-taste-2-base.liquid`; no selected marker existed on
+the cards at all (selection only showed in the final section's `.fin-flav`
+pills, which drive the existing setFlavor() → body[data-flavor]). Change
+(taste-2-base only): `.fcard` → bg #f4fcf6, border 2px solid #7dfda3,
+strip removed; selected card `body[data-flavor="mango"] .fcard.mango,
+body[data-flavor="berry"] .fcard.berry { background:#ebfceb;
+box-shadow:inset 0 0 0 1px #7dfda3 }` (same as other pages' .flav
+selected state). `--c` kept so the `.tn` flavour-note colour is
+unchanged. No JS / behaviour change.
+
+FIX 5 — HERO BUTTON WRAPPING. Root cause: the app expands the $59.97
+inside hero CTA buttons into sale + struck + badge ($50.97 $59.97 Save
+15% — ~40–60 chars) and it folded mid-phrase in the 420px CTA
+containers; CF's top hero is full-width (860px) so it stayed one line,
+the 420px `.cta-band` copies and the Taste 2 hero folded. Labels/markup
+untouched (app tokens intact). Change: containers 420px → 560px
+(`.th .cta-wrap` in taste-2-base; `.cta-band` in caffeine-free-base);
+hero buttons `font-size:1rem; padding:0 24px; text-wrap:balance`;
+`white-space:nowrap` inside `@media (min-width:768px)` only. Desktop
+estimates: expanded labels ~430px (Taste 2) / ~415px (CF mid-page) /
+~550px (CF top hero incl. `, Free Shipping`) — all fit. Mobile: wrapping
+allowed but balanced, no overflow. CF mid-page copies live in
+`biome-caffeine-free-reasons.liquid` (×2) + `reviews.liquid` — not edited,
+the CSS fix covers them.
+
+FIX 6 — LARGE BUY-BOX PRICE LINE on GF / GH2 / CF / MS. Finding: the row
+prices were ALREADY 1.25rem in the rendered pilot (verified pre-fix via
+curl on all 4 pages) — no row-price change needed. What was missing vs
+Enzymes/PB2/Routine/Taste 2 was the separate large `.price-line` (.now
+2.2rem in existing base CSS). Change (4 buy files, same PB2/Routine
+pattern): `<div class="price-line">` immediately after `.purchase`, before
+the countdown loop: `<span class="now">{{ <pfx>_sub_m | money }}</span>
+<s class="was">{{ <pfx>_mv.price | money }}</s>` — Subscribe price
+(default mode), no hardcoded dollars. Change (4 base files, required):
+the old syncPrices() forced `.price-line .now` to the FULL price on load
+/ flavour switch — harmless while no line existed, fatal with one.
+Mirrored the PB2/Routine pattern: syncCtaPrices() sets `.now` to the
+selected-mode price + updates aria-label; syncPrices() only updates
+`.was`. Radio-change handler already calls syncCtaPrices(), so mode
+toggles update the line. The app already targets `.price-line .now` and
+re-rewrites via its MutationObserver — same as the passing pages.
+
+VERIFICATION: 9/9 SHA MATCH (taste-2-base 5d0675ca1f48,
+caffeine-free-base dd860f2b9feb, gut-first-base 291f9e7b5b65,
+gut-health-2-base 302cffcc4b5f, mom-story-base 75e55edd56d7,
+gut-first-buy fcc6bda951df, gut-health-2-buy b2e46a79b225,
+caffeine-free-buy fa795ec78417, mom-story-buy ca19718b5a5d); curl
+(pilot preview, all 8 pages): Taste 2 fcard neon rule present, 0×
+border-top:8px, selected body[data-flavor] rule present, hero 560px +
+nowrap ≥768px rules present; CF .cta-band 560px + nowrap rules present;
+GF/GH2/CF/MS exactly one new .price-line each rendering $47.98 / struck
+$59.97 directly after .purchase, .purchase-price 1.25rem rules still
+present, mode-aware JS present, old full-price .now writes absent.
+Enzymes/PB2/Routine untouched. Notes:
+~/workspace/biome-pilot-rollout/restyle-2026-11-19/v14-theme-notes.md;
+backup ~/workspace/backups/biome-theory/landing-restyle-v14-theme-2026-11-19.md;
+edits v14_edit.py, copies v14-theme/, upload v14_upload_verify.py.
+Remaining risk: the one-line desktop hero result depends on the
+app-expanded label length — curl cannot run the app's JS, so the browser
+tour is the real proof; if a label still folds, the next lever is
+shortening (CF's `, Free Shipping` suffix duplicates the btn-note below
+the button). Mobile hero buttons intentionally still wrap (balanced 2
+lines). The 4 new price lines rely on the app's existing `.price-line
+.now` selector + MutationObserver.
 
 ## v13 — Hero / section links follow the purchase-mode toggle (2026-11-19, app phase only, NOT yet deployed)
 
