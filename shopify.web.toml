@@ -1,0 +1,6 @@
+name = "React Router"
+roles = ["frontend", "backend"]
+webhooks_path = "/webhooks/app/uninstalled"
+[commands]
+predev = "node ./scripts/db.mjs generate"
+dev = "node ./scripts/db.mjs deploy && npm exec react-router dev"

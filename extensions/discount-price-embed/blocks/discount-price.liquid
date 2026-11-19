@@ -1,0 +1,29 @@
+{% assign cfg = shop.metafields.discount_display.settings.value %}
+{% assign prices = shop.metafields.discount_display.prices.value %}
+
+{% if cfg.enabled %}
+  <style>
+    .dd-orig { opacity: 0.6; margin-right: 0.4em; }
+    .dd-sale { font-weight: 600; }
+    .dd-badge { display: inline-block; margin-left: 8px; padding: 2px 8px; border-radius: 999px; font-size: .72rem; font-weight: 800; letter-spacing: .04em; vertical-align: 2px; white-space: nowrap; }
+    .dd-badge--rounded { border-radius: 6px; }
+    .dd-badge--square { border-radius: 2px; }
+    .dd-badge--small { font-size: .62rem; padding: 1px 6px; }
+    .dd-badge--large { font-size: .85rem; padding: 4px 10px; }
+  </style>
+  <script>
+    window.DiscountDisplay = {
+      settings: {{ cfg | json }},
+      prices: {{ prices | json }}
+    };
+  </script>
+  <script src="{{ 'discount-price.js' | asset_url }}" defer></script>
+{% endif %}
+
+{% schema %}
+{
+  "name": "Discount Price",
+  "target": "body",
+  "settings": []
+}
+{% endschema %}
