@@ -4,8 +4,15 @@ import { syncDiscounts } from "./discount-sync.server.js";
 
 const productId = "gid://shopify/Product/1";
 const discountNodeId = "gid://shopify/DiscountAutomaticNode/1";
+const codeDiscountNodeId = "gid://shopify/DiscountCodeNode/2";
 
-function makeAdmin({ items, variants, discountStatus = "ACTIVE" }) {
+function makeAdmin({
+  items,
+  variants,
+  discountStatus = "ACTIVE",
+  nodeId = discountNodeId,
+  nodeField = "automaticDiscount",
+}) {
   let savedPrices;
 
   return {
@@ -15,8 +22,8 @@ function makeAdmin({ items, variants, discountStatus = "ACTIVE" }) {
       if (query.includes("node(id: $id)")) {
         data = {
           node: {
-            id: discountNodeId,
-            discount: {
+            id: nodeId,
+            [nodeField]: {
               status: discountStatus,
               title: "Test discount",
               customerGets: {
@@ -131,4 +138,26 @@ test("sync clears prices when the selected discount is not active", async () => 
   assert.equal(result.cleared, true);
   assert.equal(result.inactive, true);
   assert.deepEqual(admin.getSavedPrices(), {});
+});
+
+test("sync applies a selected code discount via its codeDiscount field", async () => {
+  const admin = makeAdmin({
+    items: {
+      products: { nodes: [{ id: productId }] },
+      productVariants: { nodes: [] },
+    },
+    variants: {
+      nodes: [{ id: "gid://shopify/ProductVariant/101", price: "100.00" }],
+    },
+    nodeId: codeDiscountNodeId,
+    nodeField: "codeDiscount",
+  });
+
+  const result = await syncDiscounts(admin, {
+    discountId: codeDiscountNodeId,
+  });
+
+  assert.equal(result.count, 1);
+  const entry = admin.getSavedPrices()["sample-product"];
+  assert.deepEqual(entry.variants["101"], { o: 100, s: 90 });
 });

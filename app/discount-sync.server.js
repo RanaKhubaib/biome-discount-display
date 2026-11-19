@@ -10,7 +10,7 @@ query ($id: ID!) {
   node(id: $id) {
     id
     ... on DiscountAutomaticNode {
-      discount {
+      automaticDiscount {
         ... on DiscountAutomaticBasic {
           status
           title
@@ -35,7 +35,7 @@ query ($id: ID!) {
       }
     }
     ... on DiscountCodeNode {
-      discount {
+      codeDiscount {
         ... on DiscountCodeBasic {
           status
           title
@@ -417,7 +417,13 @@ export async function syncDiscounts(admin, settings = {}) {
 
   const data = await readGraphQL(admin, DISCOUNT_NODE_QUERY, { id: discountId });
   const node = data.node;
-  const discount = node?.discount;
+  // DiscountAutomaticNode / DiscountCodeNode have NO `discount` field —
+  // the discount lives under `automaticDiscount` / `codeDiscount`. (The
+  // picker is different: discountNodes returns DiscountNode objects, which
+  // DO have a `discount` field — that's why the picker worked while the
+  // sync failed with "Field 'discount' doesn't exist on type
+  // 'DiscountAutomaticNode'" in Admin API 2026-10.)
+  const discount = node?.automaticDiscount || node?.codeDiscount;
   if (!node || !discount) {
     await savePrices(admin, {});
     return { count: 0, cleared: true, notFound: true };
