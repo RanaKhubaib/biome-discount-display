@@ -146,6 +146,27 @@
     return null;
   }
 
+  // Product page: Appstle's widget radios are named selling_plan — value
+  // "" is One-time, a plan id is Subscribe. The URL also gains/loses
+  // ?selling_plan= as the option changes. Returns "onetime", "subscribe",
+  // or null when neither signal is readable yet.
+  function productPageMode() {
+    var checked = document.querySelector(
+      'input[name="selling_plan"]:checked',
+    );
+    if (checked) return checked.value ? "subscribe" : "onetime";
+    try {
+      if (new URL(location.href).searchParams.get("selling_plan")) {
+        return "subscribe";
+      }
+    } catch (e) {}
+    var sp = document.querySelector(
+      'form[action*="/cart/add"] input[name="selling_plan"]',
+    );
+    if (sp && sp.value) return "subscribe";
+    return null;
+  }
+
   // No switch on this page (product page, cards): only rewrite the element
   // when it is currently showing a one-time price — i.e. the variant's
   // original or sale price. A subscription price (or anything else) means
@@ -214,7 +235,13 @@
       ) {
         return;
       }
-      var scope = form.closest("section") || form.closest(".product");
+      // Shopify renders a section as <div class="shopify-section"> in this
+      // theme (there is no <section> tag), so fall back to it — otherwise
+      // no scope is found and the whole product-page branch is skipped.
+      var scope =
+        form.closest("section") ||
+        form.closest(".shopify-section") ||
+        form.closest(".product");
       if (!scope) return;
       var idInput = form.querySelector('[name="id"]');
       candidates.push({
@@ -310,10 +337,18 @@
           S.productSelector || ".price",
         );
         if (productSelector && prices) {
+          var mode = productPageMode();
           productForm.scope
             .querySelectorAll(productSelector)
             .forEach(function (el) {
-              if (!cardLinkFor(el)) maybeApply(el, prices);
+              if (cardLinkFor(el)) return;
+              // Subscribe: Appstle owns the price ($47.98 / Save 20%).
+              // Restore anything we wrote and leave it alone.
+              if (mode === "subscribe") {
+                unapply(el);
+                return;
+              }
+              maybeApply(el, prices);
             });
         }
       }
@@ -325,6 +360,14 @@
         S.cardSelectors,
         S.cardSelector || ".price",
       );
+      // This theme's /collections/all grid is a custom section whose price
+      // is .bt-collection-grid__price, not .price — include it alongside
+      // the merchant-configured selectors so those cards get the discount
+      // too (their links carry no ?variant=, so the card-level price
+      // fallback in the loop below applies).
+      if (cardSelector) {
+        cardSelector += ", .bt-collection-grid__price";
+      }
       if (!cardSelector) return;
       document.querySelectorAll(cardSelector).forEach(function (el) {
         var a = cardLinkFor(el);
@@ -345,8 +388,9 @@
   function later() {
     timers.forEach(clearTimeout);
     timers = [];
-    // Theme JS often rewrites price after our first pass — retry a few times.
-    [50, 150, 350, 700].forEach(function (ms) {
+    // Theme JS (and Appstle's sellingPlanChanged burst) often rewrites the
+    // price after our first pass — retry a few times, longer than the burst.
+    [50, 150, 350, 700, 1200, 2000].forEach(function (ms) {
       timers.push(setTimeout(run, ms));
     });
   }
