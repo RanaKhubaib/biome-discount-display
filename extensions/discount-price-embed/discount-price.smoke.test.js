@@ -220,11 +220,10 @@ test("widget one-time row: same layout as the Subscribe row, subscribe row untou
     assert.deepEqual(directPartOrder(oneTime), [
       "dd-sale",
       "dd-orig",
-      "dd-badge dd-badge--pill dd-badge--medium",
     ]);
     assert.equal(oneTime.querySelector(".dd-sale").textContent, "$50.97");
     assert.equal(oneTime.querySelector(".dd-orig").textContent, "$59.97");
-    assert.equal(oneTime.querySelector(".dd-badge").textContent, "Save 15%");
+    assert.equal(oneTime.querySelector(".dd-badge"), null);
     // Appstle's own compare span is hidden while ours is shown.
     const compare = doc.querySelector(".appstle_onetime_amount_compare");
     assert.equal(compare.style.display, "none");
@@ -290,7 +289,7 @@ test("widget one-time row survives Appstle re-rendering its text", async () => {
     oneTime.textContent = "$59.97";
     await sleep(150);
     assert.equal(oneTime.querySelector(".dd-sale").textContent, "$50.97");
-    assert.equal(oneTime.querySelector(".dd-badge").textContent, "Save 15%");
+    assert.equal(oneTime.querySelector(".dd-badge"), null);
   } finally {
     dom.window.close();
   }
@@ -565,11 +564,10 @@ test("widget one-time row is rewritten even when the price span lacks .appstle_o
     assert.deepEqual(directPartOrder(oneTime), [
       "dd-sale",
       "dd-orig",
-      "dd-badge dd-badge--pill dd-badge--medium",
     ]);
     assert.equal(oneTime.querySelector(".dd-sale").textContent, "$50.97");
     assert.equal(oneTime.querySelector(".dd-orig").textContent, "$59.97");
-    assert.equal(oneTime.querySelector(".dd-badge").textContent, "Save 15%");
+    assert.equal(oneTime.querySelector(".dd-badge"), null);
     // Appstle's own compare span is hidden while ours is shown.
     const compare = doc.querySelector(".appstle_onetime_amount_compare");
     assert.equal(compare.style.display, "none");
@@ -638,7 +636,7 @@ test("widget one-time row is rewritten when Appstle injects it late without the 
     );
     assert.ok(oneTime, "expected a one-time price span after late injection");
     assert.equal(oneTime.querySelector(".dd-sale").textContent, "$50.97");
-    assert.equal(oneTime.querySelector(".dd-badge").textContent, "Save 15%");
+    assert.equal(oneTime.querySelector(".dd-badge"), null);
     const subPrice = doc.querySelectorAll(".appstle_price_block")[1];
     assert.equal(subPrice.textContent, "$47.98");
     assert.equal(subPrice.querySelector(".dd-sale"), null);
@@ -669,7 +667,7 @@ test("widget one-time row survives Appstle replacing the whole span, even withou
     pick().parentNode.replaceChild(fresh, pick());
     await sleep(400);
     assert.equal(pick().querySelector(".dd-sale").textContent, "$50.97");
-    assert.equal(pick().querySelector(".dd-badge").textContent, "Save 15%");
+    assert.equal(pick().querySelector(".dd-badge"), null);
   } finally {
     dom.window.close();
   }
@@ -751,11 +749,10 @@ test("widget one-time row (WIDGET_TYPE_2) is rewritten like the Subscribe row", 
     assert.deepEqual(directPartOrder(oneTime), [
       "dd-sale",
       "dd-orig",
-      "dd-badge dd-badge--pill dd-badge--medium",
     ]);
     assert.equal(oneTime.querySelector(".dd-sale").textContent, "$50.97");
     assert.equal(oneTime.querySelector(".dd-orig").textContent, "$59.97");
-    assert.equal(oneTime.querySelector(".dd-badge").textContent, "Save 15%");
+    assert.equal(oneTime.querySelector(".dd-badge"), null);
     // The sr-only text follows the visible rewrite, so a page-text read
     // shows the sale price, not the stale "Regular price $59.97".
     assert.equal(
@@ -811,7 +808,7 @@ test("widget one-time row (WIDGET_TYPE_2) survives Appstle re-rendering its text
     pick().innerHTML = "$59.97";
     await sleep(400);
     assert.equal(pick().querySelector(".dd-sale").textContent, "$50.97");
-    assert.equal(pick().querySelector(".dd-badge").textContent, "Save 15%");
+    assert.equal(pick().querySelector(".dd-badge"), null);
     assert.equal(
       doc.querySelector(
         ".appstle_one_time_price_wrapper .appstle_subscription_amount-appstle-sr-only",
@@ -889,7 +886,7 @@ test("widget one-time row (WIDGET_TYPE_2) shows no app badge when Appstle's bund
   }
 });
 
-test("widget one-time row (WIDGET_TYPE_2) drops the app badge when Appstle fills its bundle pill late", async () => {
+test("widget one-time row (WIDGET_TYPE_2) never adds an app badge even when Appstle's bundle pill is empty on load", async () => {
   const dom = runPage(
     PRODUCT_HTML_WIDGET_TYPE_2,
     `https://biometheory.shop/products/${HANDLE}`,
@@ -902,16 +899,19 @@ test("widget one-time row (WIDGET_TYPE_2) drops the app badge when Appstle fills
       doc.querySelector(
         ".appstle_one_time_price_wrapper .appstle_subscription_amount",
       );
-    // Appstle's pill is still an empty placeholder on load, so the app
-    // badge renders (the row would otherwise have no badge at all).
+    // Appstle's pill is still an empty placeholder on load, but the app
+    // never adds its own badge in this row (the pill is the row's badge,
+    // and Appstle fills it shortly after) — so the row shows sale +
+    // struck original with no app badge from the first render.
     assert.ok(pick().querySelector(".dd-sale"), "expected the row rewritten on load");
-    assert.equal(pick().querySelector(".dd-badge").textContent, "Save 15%");
+    assert.equal(pick().querySelector(".dd-badge"), null);
     // Appstle fills its bundle pill after the app runs.
     doc.querySelector(
       ".appstle_bundle_discount_amount.one_time_discount",
     ).textContent = "SAVE 15%";
     await sleep(400);
-    // The observer re-run re-renders the row without the app badge.
+    // The row still shows sale + struck with no app badge, and Appstle's
+    // left pill is now the row's one badge.
     assert.equal(pick().querySelector(".dd-sale").textContent, "$50.97");
     assert.equal(pick().querySelector(".dd-orig").textContent, "$59.97");
     assert.equal(pick().querySelector(".dd-badge"), null);
