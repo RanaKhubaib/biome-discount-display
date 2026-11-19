@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { syncDiscounts } from "./discount-sync.server.js";
+import { syncDiscounts, loadSettings, SLOT_DEFS } from "./discount-sync.server.js";
 
 const productId = "gid://shopify/Product/1";
 const discountNodeId = "gid://shopify/DiscountAutomaticNode/1";
@@ -304,4 +304,118 @@ test("sync omits subscribe data for products outside the selling-plan group", as
   assert.equal(result.subPctSource, "plan");
   const entry = admin.getSavedPrices()["sample-product"];
   assert.deepEqual(entry.variants["101"], { o: 100, s: 90, op: 10 });
+});
+
+function settingsAdmin(saved) {
+  return {
+    async graphql(query) {
+      let data;
+      if (query.includes("shop {")) {
+        data = {
+          shop: {
+            id: "gid://shopify/Shop/1",
+            metafield: saved
+              ? { value: JSON.stringify(saved) }
+              : null,
+          },
+        };
+      } else {
+        throw new Error(`Unexpected GraphQL query: ${query}`);
+      }
+      return { json: async () => ({ data }) };
+    },
+  };
+}
+
+test("loadSettings builds a slot for every place, with the new defaults", async () => {
+  const loaded = await loadSettings(settingsAdmin(null));
+
+  assert.deepEqual(
+    Object.keys(loaded.slots).sort(),
+    SLOT_DEFS.map((def) => def.id).sort(),
+  );
+  assert.equal(loaded.originalFirst, false);
+  assert.deepEqual(loaded.widgetOneTimeSelectors, [
+    ".appstle_onetime_amount",
+  ]);
+  assert.deepEqual(loaded.ctaSelectors, [
+    '.cta-wrap a.btn[href="#buy"]',
+    ".la-cta a.btn",
+    'button[data-add="current"] .final-price',
+    'button[data-add="current"] .sticky-price',
+    ".ostrip",
+  ]);
+  assert.deepEqual(loaded.ctaBadgeSelectors, [".cta-wrap .pill", ".oc-tag"]);
+  assert.deepEqual(loaded.globalSelectors, []);
+  assert.deepEqual(loaded.landingSelectors, [
+    '.purchase-opt[data-purchase-opt="onetime"] .purchase-price',
+    ".price-line .now",
+  ]);
+  // A fresh slot inherits the global badge/price defaults (null = inherit).
+  assert.equal(loaded.slots.product.showBadge, true);
+  assert.equal(loaded.slots.product.originalFirst, false);
+  assert.equal(loaded.slots.product.badgeBg, null);
+});
+
+test("loadSettings migrates the old landing default to include the price line", async () => {
+  const loaded = await loadSettings(
+    settingsAdmin({
+      landingSelectors: [
+        '.purchase-opt[data-purchase-opt="onetime"] .purchase-price',
+      ],
+    }),
+  );
+
+  assert.deepEqual(loaded.landingSelectors, [
+    '.purchase-opt[data-purchase-opt="onetime"] .purchase-price',
+    ".price-line .now",
+  ]);
+});
+
+test("loadSettings leaves a merchant-edited landing selector list alone", async () => {
+  const loaded = await loadSettings(
+    settingsAdmin({ landingSelectors: [".my-buy-box-price"] }),
+  );
+
+  assert.deepEqual(loaded.landingSelectors, [".my-buy-box-price"]);
+});
+
+test("loadSettings preserves saved per-slot display settings", async () => {
+  const loaded = await loadSettings(
+    settingsAdmin({
+      slots: {
+        product: {
+          originalFirst: true,
+          showBadge: false,
+          saleColor: "#111111",
+          badgeBg: "#222222",
+          badgeColor: "#eeeeee",
+          badgeStyle: "square",
+          badgeSize: "large",
+        },
+      },
+    }),
+  );
+
+  assert.deepEqual(loaded.slots.product, {
+    originalFirst: true,
+    showBadge: false,
+    saleColor: "#111111",
+    badgeBg: "#222222",
+    badgeColor: "#eeeeee",
+    badgeStyle: "square",
+    badgeSize: "large",
+  });
+  // Slots the merchant never touched still inherit the globals.
+  assert.equal(loaded.slots.card.showBadge, true);
+  assert.equal(loaded.slots.card.badgeBg, null);
+});
+
+test("loadSettings keeps an explicitly emptied selector list empty (slot off)", async () => {
+  const loaded = await loadSettings(
+    settingsAdmin({ ctaSelectors: [], globalSelectors: [] }),
+  );
+
+  assert.deepEqual(loaded.ctaSelectors, []);
+  assert.deepEqual(loaded.globalSelectors, []);
 });

@@ -1,0 +1,494 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
+import { JSDOM } from "jsdom";
+
+const dir = dirname(fileURLToPath(import.meta.url));
+const scriptSrc = readFileSync(join(dir, "assets", "discount-price.js"), "utf8");
+
+const HANDLE = "biome-theory-super-greens-mango-flavour";
+const VARIANT = "47678087266521";
+
+function basePrices() {
+  return {
+    [HANDLE]: {
+      variants: {
+        [VARIANT]: { o: 59.97, s: 50.97, op: 15, sp: 47.98, spp: 20 },
+      },
+      o: 59.97,
+      s: 50.97,
+      op: 15,
+      sp: 47.98,
+      spp: 20,
+      card: { o: 59.97, s: 50.97, op: 15, sp: 47.98, spp: 20 },
+    },
+  };
+}
+
+function baseSettings(overrides = {}) {
+  return {
+    enabled: true,
+    showOnCards: true,
+    showOnProductPage: true,
+    showOnLandingPages: true,
+    saleColor: "#d82c0d",
+    originalFirst: false,
+    cardSelectors: [".price"],
+    productSelectors: [".price"],
+    landingSelectors: [
+      '.purchase-opt[data-purchase-opt="onetime"] .purchase-price',
+      ".price-line .now",
+    ],
+    widgetOneTimeSelectors: [".appstle_onetime_amount"],
+    ctaSelectors: [
+      '.cta-wrap a.btn[href="#buy"]',
+      ".la-cta a.btn",
+      'button[data-add="current"] .final-price',
+      'button[data-add="current"] .sticky-price',
+      ".ostrip",
+    ],
+    landingBadgeSelectors: [".burst"],
+    ctaBadgeSelectors: [".cta-wrap .pill", ".oc-tag"],
+    globalSelectors: [],
+    slots: {},
+    discountId: "gid://shopify/DiscountAutomaticNode/1577223291097",
+    discountTitle: "15% Off",
+    badgeEnabled: true,
+    badgeStyle: "pill",
+    badgeSize: "medium",
+    badgeBg: "#42572A",
+    badgeColor: "#ffffff",
+    sellingPlanGroupId: "gid://shopify/SellingPlanGroup/3389751513",
+    subPctFallback: null,
+    customCss: "",
+    ...overrides,
+  };
+}
+
+// Builds a jsdom page, installs window.DiscountDisplay + window.Shopify,
+// runs the storefront script as a <script> element (so it executes in the
+// page's own context, exactly as the theme app embed loads it), and returns
+// the dom. `setup` runs before the script is added (e.g. to set
+// window.*_PRODUCTS).
+function runPage(html, url, settings, prices, setup) {
+  const dom = new JSDOM(html, {
+    url,
+    pretendToBeVisual: true,
+    runScripts: "dangerously",
+  });
+  dom.window.Shopify = { currency: { active: "USD", rate: 1 } };
+  dom.window.DiscountDisplay = { settings, prices };
+  if (setup) setup(dom.window);
+  const script = dom.window.document.createElement("script");
+  script.textContent = scriptSrc;
+  dom.window.document.head.appendChild(script);
+  return dom;
+}
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Order of the rendered parts inside a rewritten price element:
+// sale, struck original, badge.
+function partOrder(el) {
+  const wrap = el.querySelector(".dd-wrap");
+  assert.ok(wrap, "expected a .dd-wrap in " + el.outerHTML);
+  return [...wrap.children].map((child) => child.className);
+}
+
+// Same, for elements the app rewrites in place without a .dd-wrap
+// (the Appstle widget's one-time row).
+function directPartOrder(el) {
+  return [...el.children].map((child) => child.className);
+}
+
+const PRODUCT_HTML = `
+<div class="shopify-section">
+  <div class="product">
+    <div class="price">$59.97</div>
+    <form action="/cart/add">
+      <input type="hidden" name="id" value="${VARIANT}">
+      <input type="radio" name="selling_plan" value="" checked>
+      <input type="radio" name="selling_plan" value="6152224985">
+    </form>
+    <div class="appstle_subscription_wrapper">
+      <div class="appstle_input_wrapper">
+        <input type="radio" name="selling_plan" value="" checked>
+        <label>
+          One-time purchase
+          <div class="appstle-selling-plan-detail-wrapper">
+            <div class="appstle_span_wrapper">
+              <span class="appstle_lowercase appstle_sellingPlan_price appstle_onetime_amount_compare">$59.97</span>
+              <span class="appstle_lowercase appstle_sellingPlan_price appstle_onetime_amount">$59.97</span>
+            </div>
+          </div>
+        </label>
+      </div>
+      <div class="appstle_input_wrapper">
+        <input type="radio" name="selling_plan" value="6152224985">
+        <label>
+          Subscribe &amp; Save
+          <div class="appstle-selling-plan-detail-wrapper">
+            <div class="appstle_span_wrapper">
+              <span class="appstle_lowercase appstle_sellingPlan_formattedCompareAtPrice appstle_price_block">$59.97</span>
+              <span class="appstle_lowercase appstle_sellingPlan_price appstle_price_block">$47.98</span>
+            </div>
+          </div>
+          <strong class="appstle-save-badge">SAVE 20%</strong>
+        </label>
+      </div>
+    </div>
+  </div>
+</div>`;
+
+test("product page: sale first, then struck original, then badge", () => {
+  const dom = runPage(
+    PRODUCT_HTML,
+    `https://biometheory.shop/products/${HANDLE}`,
+    baseSettings(),
+    basePrices(),
+  );
+  try {
+    const price = dom.window.document.querySelector(".price");
+    assert.deepEqual(partOrder(price), [
+      "dd-sale",
+      "dd-orig",
+      "dd-badge dd-badge--pill dd-badge--medium",
+    ]);
+    assert.equal(price.querySelector(".dd-sale").textContent, "$50.97");
+    assert.equal(price.querySelector(".dd-orig").textContent, "$59.97");
+    assert.equal(price.querySelector(".dd-badge").textContent, "Save 15%");
+  } finally {
+    dom.window.close();
+  }
+});
+
+test("product page: originalFirst flips the order for that slot only", () => {
+  const settings = baseSettings({
+    slots: {
+      product: { originalFirst: true },
+      card: { originalFirst: true, showBadge: false, saleColor: "#0000ff" },
+    },
+  });
+  const html = `
+  <div class="shopify-section"><div class="product">
+    <div class="price">$59.97</div>
+    <form action="/cart/add">
+      <input type="hidden" name="id" value="${VARIANT}">
+      <input type="radio" name="selling_plan" value="" checked>
+    </form>
+  </div></div>
+  <ul><li><a href="/products/${HANDLE}">x</a><span class="price">$59.97</span></li></ul>`;
+  const dom = runPage(
+    html,
+    `https://biometheory.shop/products/${HANDLE}`,
+    settings,
+    basePrices(),
+  );
+  try {
+    const doc = dom.window.document;
+    const productPrice = doc.querySelector(".product .price");
+    assert.deepEqual(partOrder(productPrice), [
+      "dd-orig",
+      "dd-sale",
+      "dd-badge dd-badge--pill dd-badge--medium",
+    ]);
+    // The card slot overrides: original first, no badge, blue sale price.
+    const cardPrice = doc.querySelector("li .price");
+    assert.deepEqual(partOrder(cardPrice), ["dd-orig", "dd-sale"]);
+    assert.equal(cardPrice.querySelector(".dd-badge"), null);
+    assert.match(
+      cardPrice.querySelector(".dd-sale").getAttribute("style"),
+      /#0000ff/,
+    );
+  } finally {
+    dom.window.close();
+  }
+});
+
+test("widget one-time row: same layout as the Subscribe row, subscribe row untouched", () => {
+  const dom = runPage(
+    PRODUCT_HTML,
+    `https://biometheory.shop/products/${HANDLE}`,
+    baseSettings(),
+    basePrices(),
+  );
+  try {
+    const doc = dom.window.document;
+    const oneTime = doc.querySelector(".appstle_onetime_amount");
+    assert.deepEqual(directPartOrder(oneTime), [
+      "dd-sale",
+      "dd-orig",
+      "dd-badge dd-badge--pill dd-badge--medium",
+    ]);
+    assert.equal(oneTime.querySelector(".dd-sale").textContent, "$50.97");
+    assert.equal(oneTime.querySelector(".dd-orig").textContent, "$59.97");
+    assert.equal(oneTime.querySelector(".dd-badge").textContent, "Save 15%");
+    // Appstle's own compare span is hidden while ours is shown.
+    const compare = doc.querySelector(".appstle_onetime_amount_compare");
+    assert.equal(compare.style.display, "none");
+    // The Subscribe row is Appstle's — prices, badge and markup untouched.
+    const subPrice = doc.querySelectorAll(".appstle_price_block")[1];
+    assert.equal(subPrice.textContent, "$47.98");
+    assert.equal(subPrice.querySelector(".dd-sale"), null);
+    assert.equal(
+      doc.querySelector(".appstle-save-badge").textContent,
+      "SAVE 20%",
+    );
+    // The app no longer restyles Appstle's badges: no override stylesheet
+    // and no inline badge styles written by the app.
+    assert.equal(doc.getElementById("dd-appstle-badge"), null);
+    assert.equal(
+      doc.querySelector(".appstle-save-badge").style.backgroundColor,
+      "",
+    );
+  } finally {
+    dom.window.close();
+  }
+});
+
+test("widget one-time row is rewritten even in Subscribe mode; main price is left to Appstle", async () => {
+  const html = PRODUCT_HTML.replace(
+    '<input type="radio" name="selling_plan" value="" checked>',
+    '<input type="radio" name="selling_plan" value="">',
+  ).replace(
+    '<input type="radio" name="selling_plan" value="6152224985">',
+    '<input type="radio" name="selling_plan" value="6152224985" checked>',
+  );
+  const dom = runPage(
+    html,
+    `https://biometheory.shop/products/${HANDLE}`,
+    baseSettings(),
+    basePrices(),
+  );
+  try {
+    const doc = dom.window.document;
+    // The one-time row always shows the one-time price.
+    const oneTime = doc.querySelector(".appstle_onetime_amount");
+    assert.equal(oneTime.querySelector(".dd-sale").textContent, "$50.97");
+    // The main .price is Appstle's subscribe price in this mode.
+    assert.equal(doc.querySelector(".price").querySelector(".dd-wrap"), null);
+    assert.equal(doc.querySelector(".price").textContent, "$59.97");
+  } finally {
+    dom.window.close();
+  }
+});
+
+test("widget one-time row survives Appstle re-rendering its text", async () => {
+  const dom = runPage(
+    PRODUCT_HTML,
+    `https://biometheory.shop/products/${HANDLE}`,
+    baseSettings(),
+    basePrices(),
+  );
+  try {
+    const doc = dom.window.document;
+    const oneTime = doc.querySelector(".appstle_onetime_amount");
+    assert.ok(oneTime.querySelector(".dd-sale"));
+    // Appstle wipes the span's content on variant change.
+    oneTime.textContent = "$59.97";
+    await sleep(150);
+    assert.equal(oneTime.querySelector(".dd-sale").textContent, "$50.97");
+    assert.equal(oneTime.querySelector(".dd-badge").textContent, "Save 15%");
+  } finally {
+    dom.window.close();
+  }
+});
+
+const LANDING_HTML = `
+<div class="shopify-section"><section class="bb gutter" id="buy">
+  <div class="burst"><span>SAVE<br>20%</span></div>
+  <div class="cta-wrap"><span class="pill">Save 24% + Free Shipping</span>
+    <a class="btn" href="#buy">Start With Your Gut — $59.97</a></div>
+  <div class="cta-wrap"><span class="pill">Save 24% + Free Shipping</span>
+    <button class="btn" type="button" data-add="current">Add to Cart — <span class="sticky-price">$47.98</span></button></div>
+  <div class="ostrip"><p>Super Greens: $59.97<s></s><small>About $2.40 a glass · Free shipping</small></p></div>
+  <div class="purchase-opt" data-purchase-opt="onetime">
+    <span class="purchase-price">$59.97</span><span class="save-badge">Save 24%</span>
+  </div>
+  <div class="purchase-opt" data-purchase-opt="subscribe">
+    <span class="purchase-price">$47.98</span><span class="save-badge">Save 24%</span>
+  </div>
+  <div class="price-line" aria-label="Price: $59.97, was $78.93">
+    <span class="now">$59.97</span><s class="was"></s>
+  </div>
+  <button class="btn light" type="button" data-add="current">Add to Cart — <span class="final-price">$59.97</span></button>
+  <input type="radio" name="gf-purchase" value="onetime">
+  <input type="radio" name="gf-purchase" value="subscribe" checked>
+</section></div>`;
+
+test("landing pages: buy box, price line, CTA buttons and pills go dynamic", async () => {
+  const dom = runPage(
+    LANDING_HTML,
+    "https://biometheory.shop/pages/biome-gut-first",
+    baseSettings(),
+    basePrices(),
+    (window) => {
+      window.document.body.dataset.flavor = "mango";
+      window.GF_PRODUCTS = { mango: { variant: VARIANT } };
+    },
+  );
+  try {
+    const doc = dom.window.document;
+    // Buy-box one-time row: sale first, struck original, badge.
+    const buyPrice = doc.querySelector(
+      '.purchase-opt[data-purchase-opt="onetime"] .purchase-price',
+    );
+    assert.deepEqual(partOrder(buyPrice), [
+      "dd-sale",
+      "dd-orig",
+      "dd-badge dd-badge--pill dd-badge--medium",
+    ]);
+    // Subscribe row is never rewritten.
+    const subPrice = doc.querySelector(
+      '.purchase-opt[data-purchase-opt="subscribe"] .purchase-price',
+    );
+    assert.equal(subPrice.querySelector(".dd-wrap"), null);
+    // Price line: a shared display, so it follows the SELECTED mode —
+    // Subscribe is selected, so it shows the subscribe sale + badge.
+    const now = doc.querySelector(".price-line .now");
+    assert.equal(now.querySelector(".dd-sale").textContent, "$47.98");
+    assert.equal(now.querySelector(".dd-orig").textContent, "$59.97");
+    assert.equal(now.querySelector(".dd-badge").textContent, "Save 20%");
+    assert.equal(
+      doc.querySelector(".price-line").getAttribute("aria-label"),
+      "Price: $47.98, was $59.97",
+    );
+    // CTA button text: label kept, price token rewritten.
+    const cta = doc.querySelector('.cta-wrap a.btn[href="#buy"]');
+    assert.match(cta.textContent, /Start With Your Gut/);
+    assert.equal(cta.querySelector(".dd-sale").textContent, "$50.97");
+    assert.equal(cta.querySelector(".dd-orig").textContent, "$59.97");
+    assert.equal(cta.querySelector(".dd-badge").textContent, "Save 15%");
+    // ATC price spans: the $47.98 subscribe token gets the subscribe sale.
+    const sticky = doc.querySelector(".sticky-price");
+    assert.equal(sticky.querySelector(".dd-sale").textContent, "$47.98");
+    assert.equal(sticky.querySelector(".dd-orig").textContent, "$59.97");
+    assert.equal(sticky.querySelector(".dd-badge").textContent, "Save 20%");
+    const final = doc.querySelector(".final-price");
+    assert.equal(final.querySelector(".dd-sale").textContent, "$50.97");
+    // Offer strip: price rewritten, the $2.40 per-glass figure untouched.
+    const strip = doc.querySelector(".ostrip");
+    assert.equal(strip.querySelector(".dd-sale").textContent, "$50.97");
+    assert.match(strip.textContent, /\$2\.40 a glass/);
+    // Burst + CTA pills follow the SELECTED mode (subscribe = 20%).
+    assert.match(doc.querySelector(".burst").textContent, /20%/);
+    assert.match(
+      doc.querySelector(".cta-wrap .pill").textContent,
+      /Save 20% \+ Free Shipping/,
+    );
+    // Buy-box row pills show their own mode's %.
+    assert.equal(
+      doc.querySelector(
+        '.purchase-opt[data-purchase-opt="onetime"] .save-badge',
+      ).textContent,
+      "Save 15%",
+    );
+    assert.equal(
+      doc.querySelector(
+        '.purchase-opt[data-purchase-opt="subscribe"] .save-badge',
+      ).textContent,
+      "Save 20%",
+    );
+
+    // Switch to One-time: burst + pills follow to 15%, and the shared
+    // price line follows to the one-time sale.
+    doc.querySelector('input[name="gf-purchase"][value="onetime"]').checked = true;
+    doc.querySelector('input[name="gf-purchase"][value="subscribe"]').checked = false;
+    doc.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+    await sleep(150);
+    assert.match(doc.querySelector(".burst").textContent, /15%/);
+    assert.match(
+      doc.querySelector(".cta-wrap .pill").textContent,
+      /Save 15% \+ Free Shipping/,
+    );
+    const nowAfter = doc.querySelector(".price-line .now");
+    assert.equal(nowAfter.querySelector(".dd-sale").textContent, "$50.97");
+    assert.equal(nowAfter.querySelector(".dd-badge").textContent, "Save 15%");
+    assert.equal(
+      doc.querySelector(".price-line").getAttribute("aria-label"),
+      "Price: $50.97, was $59.97",
+    );
+  } finally {
+    dom.window.close();
+  }
+});
+
+test("global catch-all rewrites only what no specific slot claimed", () => {
+  const settings = baseSettings({
+    globalSelectors: [".weird-price"],
+    slots: { global: { showBadge: true } },
+  });
+  const html = `
+  <ul>
+    <li><a href="/products/${HANDLE}">x</a><span class="price">$59.97</span></li>
+    <li><a href="/products/${HANDLE}">y</a><span class="weird-price">$59.97</span></li>
+  </ul>`;
+  const dom = runPage(
+    html,
+    "https://biometheory.shop/collections/all",
+    settings,
+    basePrices(),
+  );
+  try {
+    const doc = dom.window.document;
+    const card = doc.querySelector("li .price");
+    assert.equal(card.querySelectorAll(".dd-wrap").length, 1);
+    const weird = doc.querySelector(".weird-price");
+    assert.equal(weird.querySelector(".dd-sale").textContent, "$50.97");
+    assert.equal(weird.querySelector(".dd-badge").textContent, "Save 15%");
+  } finally {
+    dom.window.close();
+  }
+});
+
+test("global catch-all does not double-rewrite a price a specific slot handled", () => {
+  const settings = baseSettings({ globalSelectors: [".price"] });
+  const html = `
+  <ul><li><a href="/products/${HANDLE}">x</a><span class="price">$59.97</span></li></ul>`;
+  const dom = runPage(
+    html,
+    "https://biometheory.shop/collections/all",
+    settings,
+    basePrices(),
+  );
+  try {
+    const doc = dom.window.document;
+    assert.equal(doc.querySelector(".price").querySelectorAll(".dd-wrap").length, 1);
+  } finally {
+    dom.window.close();
+  }
+});
+
+test("custom CSS is injected and the app stays silent when disabled", () => {
+  const dom = runPage(
+    PRODUCT_HTML,
+    `https://biometheory.shop/products/${HANDLE}`,
+    baseSettings({ customCss: ".dd-sale { font-weight: 700; }" }),
+    basePrices(),
+  );
+  try {
+    const doc = dom.window.document;
+    const css = doc.getElementById("dd-custom-css");
+    assert.ok(css);
+    assert.equal(css.textContent, ".dd-sale { font-weight: 700; }");
+  } finally {
+    dom.window.close();
+  }
+
+  const off = runPage(
+    PRODUCT_HTML,
+    `https://biometheory.shop/products/${HANDLE}`,
+    baseSettings({ enabled: false }),
+    basePrices(),
+  );
+  try {
+    assert.equal(
+      off.window.document.querySelector(".price").querySelector(".dd-wrap"),
+      null,
+    );
+  } finally {
+    off.window.close();
+  }
+});

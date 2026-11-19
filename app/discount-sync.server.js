@@ -3,6 +3,57 @@ const NS = "discount_display";
 const BADGE_STYLES = ["pill", "rounded", "square"];
 const BADGE_SIZES = ["small", "medium", "large"];
 
+import { SLOT_DEFS } from "./slot-defs.js";
+
+export { SLOT_DEFS };
+
+// The landing-page buy-box selectors before the price line was added.
+// Saved settings that still hold exactly this list are migrated to the new
+// default (the price line is appended); a merchant-edited list is left alone.
+const OLD_LANDING_DEFAULT = [
+  '.purchase-opt[data-purchase-opt="onetime"] .purchase-price',
+];
+
+function withPriceLine(selectors) {
+  if (
+    selectors.length === OLD_LANDING_DEFAULT.length &&
+    selectors.every((s, i) => s === OLD_LANDING_DEFAULT[i])
+  ) {
+    return [...selectors, ".price-line .now"];
+  }
+  return selectors;
+}
+
+// Per-slot display settings. Null colour/style/size means "use the global
+// badge/price defaults above" — the settings page always saves concrete
+// values, this is only for settings saved before slots existed.
+function normalizeSlot(saved) {
+  const s = saved && typeof saved === "object" ? saved : {};
+  return {
+    originalFirst: s.originalFirst === true,
+    showBadge: s.showBadge !== false,
+    saleColor: validHex(s.saleColor, null),
+    badgeBg: validHex(s.badgeBg, null),
+    badgeColor: validHex(s.badgeColor, null),
+    badgeStyle: BADGE_STYLES.includes(s.badgeStyle) ? s.badgeStyle : null,
+    badgeSize: BADGE_SIZES.includes(s.badgeSize) ? s.badgeSize : null,
+  };
+}
+
+export function defaultSlots() {
+  const slots = {};
+  for (const def of SLOT_DEFS) slots[def.id] = normalizeSlot(null);
+  return slots;
+}
+
+function normalizeSlots(saved) {
+  const slots = {};
+  for (const def of SLOT_DEFS) {
+    slots[def.id] = normalizeSlot(saved ? saved[def.id] : null);
+  }
+  return slots;
+}
+
 // One discount, fetched by its node id (DiscountAutomaticNode /
 // DiscountCodeNode). The list query below returns these ids for the picker.
 const DISCOUNT_NODE_QUERY = `#graphql
@@ -179,13 +230,39 @@ export const DEFAULT_SETTINGS = {
   showOnProductPage: true,
   showOnLandingPages: true,
   saleColor: "#d82c0d",
+  // Global price layout: false = sale price first, then the struck
+  // original, then the badge (the Appstle layout). True = original first.
+  // Each slot can override this for its own place.
+  originalFirst: false,
   cardSelectors: [".price"],
   productSelectors: [".price"],
   // Landing-page buy boxes: the one-time purchase row only. Never add a
   // selector that matches a subscribe price — the app never rewrites those.
   landingSelectors: [
     '.purchase-opt[data-purchase-opt="onetime"] .purchase-price',
+    ".price-line .now",
   ],
+  // The Appstle widget's one-time row price (verified in the live widget
+  // template on the product page: <span class="appstle_sellingPlan_price
+  // appstle_onetime_amount">). The subscribe row uses .appstle_price_block
+  // and is never matched by this selector.
+  widgetOneTimeSelectors: [".appstle_onetime_amount"],
+  // Buttons / lines whose text contains a static price (hero + final CTA
+  // buttons, add-to-cart and sticky-bar price spans, the offer strip).
+  ctaSelectors: [
+    '.cta-wrap a.btn[href="#buy"]',
+    ".la-cta a.btn",
+    'button[data-add="current"] .final-price',
+    'button[data-add="current"] .sticky-price',
+    ".ostrip",
+  ],
+  // "Save %" pills next to CTA buttons — only the % number is rewritten.
+  ctaBadgeSelectors: [".cta-wrap .pill", ".oc-tag"],
+  // Global catch-all selectors. Empty = off.
+  globalSelectors: [],
+  // Per-slot display settings (see SLOT_DEFS). Null = use the global
+  // defaults above.
+  slots: null,
   // The one discount the app shows. Null = no sale prices on the storefront.
   discountId: null,
   discountTitle: "",
@@ -262,10 +339,31 @@ function getSelectors(settings, pluralKey, legacyKey, fallback) {
   return selectors.length ? selectors : fallback;
 }
 
+// Like getSelectors, but an explicitly saved empty list stays empty
+// (the slot is off) instead of falling back to the default. Used for the
+// slots a merchant may turn off by removing all their selectors.
+function getSelectorsOrEmpty(settings, pluralKey, fallback) {
+  if (Array.isArray(settings[pluralKey])) {
+    return settings[pluralKey]
+      .filter((selector) => typeof selector === "string")
+      .map((selector) => selector.trim())
+      .filter(Boolean);
+  }
+  return fallback;
+}
+
 export async function loadSettings(admin) {
   const data = await readGraphQL(admin, SHOP_QUERY);
   const raw = data.shop.metafield?.value;
   const saved = raw ? JSON.parse(raw) : {};
+  const landingSelectors = withPriceLine(
+    getSelectors(
+      saved,
+      "landingSelectors",
+      null,
+      DEFAULT_SETTINGS.landingSelectors,
+    ),
+  );
   return {
     ...DEFAULT_SETTINGS,
     ...saved,
@@ -285,6 +383,7 @@ export async function loadSettings(admin) {
     badgeBg: validHex(saved.badgeBg, DEFAULT_SETTINGS.badgeBg),
     badgeColor: validHex(saved.badgeColor, DEFAULT_SETTINGS.badgeColor),
     saleColor: validHex(saved.saleColor, DEFAULT_SETTINGS.saleColor),
+    originalFirst: saved.originalFirst === true,
     showOnLandingPages: saved.showOnLandingPages !== false,
     cardSelectors: getSelectors(
       saved,
@@ -298,22 +397,37 @@ export async function loadSettings(admin) {
       "productSelector",
       DEFAULT_SETTINGS.productSelectors,
     ),
-    landingSelectors: getSelectors(
+    landingSelectors,
+    widgetOneTimeSelectors: getSelectorsOrEmpty(
       saved,
-      "landingSelectors",
-      null,
-      DEFAULT_SETTINGS.landingSelectors,
+      "widgetOneTimeSelectors",
+      DEFAULT_SETTINGS.widgetOneTimeSelectors,
     ),
+    ctaSelectors: getSelectorsOrEmpty(
+      saved,
+      "ctaSelectors",
+      DEFAULT_SETTINGS.ctaSelectors,
+    ),
+    ctaBadgeSelectors: getSelectorsOrEmpty(
+      saved,
+      "ctaBadgeSelectors",
+      DEFAULT_SETTINGS.ctaBadgeSelectors,
+    ),
+    globalSelectors: getSelectorsOrEmpty(
+      saved,
+      "globalSelectors",
+      DEFAULT_SETTINGS.globalSelectors,
+    ),
+    slots: normalizeSlots(saved.slots),
     sellingPlanGroupId:
       typeof saved.sellingPlanGroupId === "string" &&
       saved.sellingPlanGroupId.trim()
         ? saved.sellingPlanGroupId.trim()
         : DEFAULT_SETTINGS.sellingPlanGroupId,
     subPctFallback: parseSubPct(saved.subPctFallback),
-    landingBadgeSelectors: getSelectors(
+    landingBadgeSelectors: getSelectorsOrEmpty(
       saved,
       "landingBadgeSelectors",
-      null,
       DEFAULT_SETTINGS.landingBadgeSelectors,
     ),
     customCss: validCustomCss(saved.customCss),

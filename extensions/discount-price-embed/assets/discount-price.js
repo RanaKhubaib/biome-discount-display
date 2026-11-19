@@ -1,3 +1,22 @@
+// Biome Discount Display — storefront price rewriting.
+//
+// Price order everywhere the app renders a price: SALE price first, then
+// the struck-through ORIGINAL price, then the "Save %" badge — the same
+// layout Appstle shows on its Subscribe row ($47.98, struck $59.97,
+// badge). Each place a price can appear is a "slot" (product cards,
+// product page, landing buy boxes, the Appstle widget's one-time row,
+// buttons & price text, the starburst, CTA pills, and a global catch-all),
+// and each slot has its own display settings in the app: whether the
+// original price shows first or second, whether the badge shows, and the
+// sale/badge colours and badge size. A slot setting left unset inherits
+// the global badge/price defaults from the app settings.
+//
+// What this app NEVER does: it does not manage subscriptions and it does
+// not touch Appstle's own badges or prices. Appstle's Subscribe row and
+// its badges are the owner's to design in Appstle. This app only rewrites
+// ONE-TIME prices (plus the static text that shows them), and its own
+// badges default to Appstle's badge design (#42572A background, white
+// text, pill) so the two look the same side by side.
 (function () {
   var D = window.DiscountDisplay;
   if (!D || !D.settings || !D.settings.enabled) return;
@@ -30,11 +49,29 @@
       : fallback;
   }
 
+  function escapeHtml(value) {
+    return String(value)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
   var saleColor = validHex(S.saleColor, "#d82c0d");
   var badgeBg = validHex(S.badgeBg, "#42572A");
   var badgeColor = validHex(S.badgeColor, "#ffffff");
-  var badgeRadius =
-    S.badgeStyle === "rounded" ? "6px" : S.badgeStyle === "square" ? "2px" : "999px";
+  var badgeStyleGlobal =
+    S.badgeStyle === "rounded"
+      ? "rounded"
+      : S.badgeStyle === "square"
+        ? "square"
+        : "pill";
+  var badgeSizeGlobal =
+    S.badgeSize === "small"
+      ? "small"
+      : S.badgeSize === "large"
+        ? "large"
+        : "medium";
 
   // Merchant custom CSS (settings > Custom CSS). Injected once as a
   // <style> element whose text content is the CSS, so it styles anything
@@ -55,80 +92,95 @@
     if (el.textContent !== css) el.textContent = css;
   }
 
-  // Appstle's subscribe badges are styled by Appstle's own widget CSS —
-  // currently pale green — and must be restyled to this app's badge colours
-  // so the product page's badges match. There are two different badges,
-  // and the v2 override missed both because it targeted only
-  // span.appstle_sellingPlan_discountText, a class that exists in
-  // Appstle's Mustache template but is never rendered by the live widget
-  // (the live JS has zero references to it):
-  //  (a) the MAIN-PRICE badge in Subscribe mode:
-  //      <span class="appstle_subscription_element appstle_subscription_save">
-  //      rendered by Appstle's JS when it rewrites the theme price. Its CSS
-  //      is `.appstle_subscription_save { color: #78f39d !important; }`
-  //      plus `border: 1px solid currentColor` — pale green text on white
-  //      with a pale green border. (Verified in Appstle's JS/CSS.)
-  //  (b) the ROW pill on the Subscribe option:
-  //      <strong class="appstle-save-badge"> — NOTE it is a <strong>,
-  //      NOT a <span>. The v5 selector used span.appstle-save-badge
-  //      (copied from Appstle's merchant custom CSS, whose
-  //      span.appstle-save-badge rule also never matches the live pill),
-  //      so it never matched and the pill stayed pale. The pale fill
-  //      comes from the unqualified .appstle-save-badge rule (#78F39D)
-  //      and the --as-badge-bg variable (#5a941d39).
-  //      (Verified in Appstle's JS template — two occurrences, both
-  //      <strong> — and the live page HTML; zero <span> occurrences.)
-  // Both are restyled here. Only colours + corner radius are changed;
-  // position, size and layout are left to Appstle, and the badge text,
-  // prices and widget behaviour are never touched.
-  // The inline style (setProperty with "important") beats any stylesheet,
-  // including Appstle's ID-based rules, and is re-applied on every run
-  // (the MutationObserver below re-invokes run() whenever Appstle
-  // re-renders the badge). A stylesheet rule is injected as well so the
-  // restyle is present from the first paint.
-  // NOTE on border-color: .appstle_subscription_save has
-  // `border: 1px solid currentColor`, so once its text colour is set to
-  // white the border would render as a white outline around the dark
-  // pill. Setting border-color to the badge background blends that 1px
-  // border into the pill (a colour-only change; the border itself, and
-  // the element's layout, are untouched).
-  // Use UNQUALIFIED class selectors (no `span` element qualifier):
-  // the row pill is a <strong>, the main-price badge is a <span>, and
-  // the template pill's tag is unverified — the class alone matches all
-  // of them regardless of tag. (The v5 span-qualified selector is what
-  // left the row pill pale: it never matched the <strong>.)
-  var APPSTLE_BADGE_SELECTOR =
-    ".appstle_subscription_save, .appstle-save-badge, .appstle_sellingPlan_discountText";
-  function injectAppstleBadgeCss() {
-    if (!S.badgeEnabled) return;
-    var el = document.getElementById("dd-appstle-badge");
-    var css =
-      APPSTLE_BADGE_SELECTOR +
-      "{background-color:" +
-      badgeBg +
-      " !important;color:" +
-      badgeColor +
-      " !important;border-color:" +
-      badgeBg +
-      " !important;border-radius:" +
-      badgeRadius +
-      " !important;}";
-    if (!el) {
-      el = document.createElement("style");
-      el.id = "dd-appstle-badge";
-      document.head.appendChild(el);
-    }
-    if (el.textContent !== css) el.textContent = css;
+  // ---- Per-slot display settings -------------------------------------
+  // Selectors live in top-level settings keys (cardSelectors,
+  // productSelectors, ...); the display sub-settings live in
+  // settings.slots[slotId]. Anything a slot leaves unset inherits the
+  // global badge/price defaults above.
+  var SLOT_SELECTOR_KEYS = {
+    card: "cardSelectors",
+    product: "productSelectors",
+    landing: "landingSelectors",
+    widgetOneTime: "widgetOneTimeSelectors",
+    cta: "ctaSelectors",
+    burst: "landingBadgeSelectors",
+    ctaPill: "ctaBadgeSelectors",
+    global: "globalSelectors",
+  };
+  var SLOT_SELECTOR_DEFAULTS = {
+    card: [".price"],
+    product: [".price"],
+    landing: [
+      '.purchase-opt[data-purchase-opt="onetime"] .purchase-price',
+      ".price-line .now",
+    ],
+    widgetOneTime: [".appstle_onetime_amount"],
+    cta: [
+      '.cta-wrap a.btn[href="#buy"]',
+      ".la-cta a.btn",
+      'button[data-add="current"] .final-price',
+      'button[data-add="current"] .sticky-price',
+      ".ostrip",
+    ],
+    burst: [".burst"],
+    ctaPill: [".cta-wrap .pill", ".oc-tag"],
+    global: [],
+  };
+
+  function slotSelectors(id) {
+    var key = SLOT_SELECTOR_KEYS[id];
+    var list = key ? S[key] : null;
+    if (Array.isArray(list) && list.length) return list;
+    return SLOT_SELECTOR_DEFAULTS[id] || [];
   }
 
-  function restyleAppstleBadge() {
-    if (!S.badgeEnabled) return;
-    document.querySelectorAll(APPSTLE_BADGE_SELECTOR).forEach(function (el) {
-      el.style.setProperty("background-color", badgeBg, "important");
-      el.style.setProperty("color", badgeColor, "important");
-      el.style.setProperty("border-color", badgeBg, "important");
-      el.style.setProperty("border-radius", badgeRadius, "important");
-    });
+  function slotCfg(id) {
+    var base = {
+      originalFirst: S.originalFirst === true,
+      showBadge: S.badgeEnabled !== false,
+      saleColor: saleColor,
+      badgeBg: badgeBg,
+      badgeColor: badgeColor,
+      badgeStyle: badgeStyleGlobal,
+      badgeSize: badgeSizeGlobal,
+    };
+    var slot = S.slots && S.slots[id];
+    if (!slot || typeof slot !== "object") return base;
+    return {
+      originalFirst:
+        typeof slot.originalFirst === "boolean"
+          ? slot.originalFirst
+          : base.originalFirst,
+      showBadge:
+        typeof slot.showBadge === "boolean" ? slot.showBadge : base.showBadge,
+      saleColor: validHex(slot.saleColor, base.saleColor),
+      badgeBg: validHex(slot.badgeBg, base.badgeBg),
+      badgeColor: validHex(slot.badgeColor, base.badgeColor),
+      badgeStyle:
+        slot.badgeStyle === "rounded" ||
+        slot.badgeStyle === "square" ||
+        slot.badgeStyle === "pill"
+          ? slot.badgeStyle
+          : base.badgeStyle,
+      badgeSize:
+        slot.badgeSize === "small" ||
+        slot.badgeSize === "large" ||
+        slot.badgeSize === "medium"
+          ? slot.badgeSize
+          : base.badgeSize,
+    };
+  }
+
+  function cfgSignature(cfg) {
+    return [
+      cfg.originalFirst ? "1" : "0",
+      cfg.showBadge ? "1" : "0",
+      cfg.saleColor,
+      cfg.badgeBg,
+      cfg.badgeColor,
+      cfg.badgeStyle,
+      cfg.badgeSize,
+    ].join("|");
   }
 
   function selectorList(selectors, legacySelector) {
@@ -140,35 +192,37 @@
       .join(", ");
   }
 
-  function badgeHtml(o, s) {
-    if (!S.badgeEnabled) return "";
+  function badgeHtml(o, s, cfg) {
+    if (!cfg.showBadge) return "";
     var pct = Math.round((1 - s / o) * 100);
     if (!(pct > 0)) return "";
-    var style =
-      S.badgeStyle === "rounded"
-        ? "rounded"
-        : S.badgeStyle === "square"
-          ? "square"
-          : "pill";
-    var size =
-      S.badgeSize === "small"
-        ? "small"
-        : S.badgeSize === "large"
-          ? "large"
-          : "medium";
     return (
       '<span class="dd-badge dd-badge--' +
-      style +
+      cfg.badgeStyle +
       " dd-badge--" +
-      size +
+      cfg.badgeSize +
       '" style="background:' +
-      badgeBg +
+      cfg.badgeBg +
       ";color:" +
-      badgeColor +
+      cfg.badgeColor +
       '">Save ' +
       pct +
       "%</span>"
     );
+  }
+
+  // Sale price FIRST, then the struck original, then the badge — unless
+  // this slot is set to show the original first.
+  function priceInnerHtml(o, s, cfg) {
+    var sale =
+      '<span class="dd-sale" style="color:' +
+      cfg.saleColor +
+      '">' +
+      money(s) +
+      "</span>";
+    var orig = '<s class="dd-orig">' + money(o) + "</s>";
+    var badge = badgeHtml(o, s, cfg);
+    return cfg.originalFirst ? orig + sale + badge : sale + orig + badge;
   }
 
   function needsApply(el, key) {
@@ -181,30 +235,26 @@
     return !!(clone.textContent || "").replace(/\s+/g, "").length;
   }
 
-  function apply(el, o, s) {
+  function apply(el, o, s, cfg, handled) {
     if (s >= o) {
       unapply(el);
       return;
     }
 
-    var key = o + "|" + s;
-    if (!needsApply(el, key)) return;
+    var key = o + "|" + s + "|" + cfgSignature(cfg);
+    if (!needsApply(el, key)) {
+      if (handled) handled.add(el);
+      return;
+    }
     // Remember what the theme rendered, so unapply() can put it back.
     if (el._ddOriginal === undefined) el._ddOriginal = el.innerHTML;
     el.innerHTML =
       '<span class="dd-wrap" data-key="' +
       key +
       '">' +
-      '<s class="dd-orig">' +
-      money(o) +
-      "</s>" +
-      '<span class="dd-sale" style="color:' +
-      saleColor +
-      '">' +
-      money(s) +
-      "</span>" +
-      badgeHtml(o, s) +
+      priceInnerHtml(o, s, cfg) +
       "</span>";
+    if (handled) handled.add(el);
   }
 
   function unapply(el) {
@@ -212,6 +262,176 @@
     if (!wrap) return;
     if (el._ddOriginal !== undefined) el.innerHTML = el._ddOriginal;
     delete el._ddOriginal;
+  }
+
+  // ---- Static price text (CTA buttons, strips, ATC price spans) ------
+  // These elements hold a price inside longer text ("Start With Your Gut
+  // — $59.97", "Add to Cart — $47.98"), so the whole element cannot be
+  // replaced. Instead the price token itself is swapped for the dynamic
+  // sale + struck original + badge, and the rest of the text is untouched.
+  // Which sale applies is read from the token: a token equal to the
+  // one-time original gets the one-time sale, a token equal to the
+  // subscribe price gets the subscribe sale. Nothing else is rewritten —
+  // other numbers (e.g. "$2.40 a glass") are left alone.
+  function staticTargetFor(n, lp) {
+    if (Math.abs(n - lp.o) < 0.011) {
+      return { sale: lp.s, pct: lp.op || Math.round((1 - lp.s / lp.o) * 100) };
+    }
+    if (lp.sp != null && Math.abs(n - lp.sp) < 0.011) {
+      return { sale: lp.sp, pct: lp.spp || 0 };
+    }
+    return null;
+  }
+
+  function restoreStatic(el) {
+    if (el._ddStaticOriginal !== undefined) {
+      el.innerHTML = el._ddStaticOriginal;
+      delete el._ddStaticOriginal;
+    }
+    el.removeAttribute("data-dd-static-key");
+  }
+
+  function applyStaticText(el, lp, cfg, handled) {
+    if (!lp || lp.s >= lp.o) {
+      restoreStatic(el);
+      return;
+    }
+    var key =
+      lp.o + "|" + lp.s + "|" + (lp.sp || "") + "|" + (lp.spp || "") + "|" + cfgSignature(cfg);
+    // Appstle / theme JS can wipe our spans by setting textContent; the
+    // key survives that, so also require our markup to still be present.
+    if (
+      el.getAttribute("data-dd-static-key") === key &&
+      el.querySelector(".dd-sale")
+    ) {
+      if (handled) handled.add(el);
+      return;
+    }
+    if (
+      el.getAttribute("data-dd-static-key") &&
+      el.getAttribute("data-dd-static-key") !== key
+    ) {
+      restoreStatic(el);
+    }
+    if (el._ddStaticOriginal === undefined) el._ddStaticOriginal = el.innerHTML;
+
+    var walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    var nodes = [];
+    var node;
+    while ((node = walker.nextNode())) nodes.push(node);
+    var changed = false;
+    nodes.forEach(function (tn) {
+      var parent = tn.parentNode;
+      if (!parent || parent.closest(".dd-sale, .dd-orig, .dd-badge")) return;
+      if (/^(SCRIPT|STYLE)$/.test(parent.nodeName)) return;
+      var text = tn.nodeValue;
+      var re = /\$[\d,]+\.\d{2}/g;
+      var m;
+      var last = 0;
+      var html = "";
+      var nodeChanged = false;
+      while ((m = re.exec(text))) {
+        var n = parseFloat(m[0].slice(1).replace(/,/g, ""));
+        var target = staticTargetFor(n, lp);
+        if (!target) continue;
+        html += escapeHtml(text.slice(last, m.index));
+        // priceInnerHtml derives the badge % from original/sale, which
+        // is the token's own % (one-time % or subscribe %) — never typed in.
+        html += priceInnerHtml(lp.o, target.sale, cfg);
+        last = m.index + m[0].length;
+        nodeChanged = true;
+      }
+      if (!nodeChanged) return;
+      html += escapeHtml(text.slice(last));
+      var tmp = document.createElement("span");
+      tmp.innerHTML = html;
+      var frag = document.createDocumentFragment();
+      while (tmp.firstChild) frag.appendChild(tmp.firstChild);
+      tn.parentNode.replaceChild(frag, tn);
+      changed = true;
+    });
+    if (changed) {
+      el.setAttribute("data-dd-static-key", key);
+      if (handled) handled.add(el);
+    }
+  }
+
+  // ---- Appstle widget: one-time row ------------------------------------
+  // The widget's one-time row price element, verified in the live widget
+  // template on the product page:
+  //   <span class="appstle_lowercase appstle_sellingPlan_price
+  //         appstle_onetime_amount">{{{oneTimePuchaseAmount}}}</span>
+  // with an optional struck compare sibling
+  //   <span class="... appstle_onetime_amount_compare">…</span>
+  // (in one widget variant the compare span is nested INSIDE the amount
+  // span instead). The Subscribe row uses .appstle_price_block and is
+  // never matched here. Only this row is rewritten, to the same layout as
+  // the Subscribe row: sale price, struck original, badge. Appstle's own
+  // compare span is hidden while ours is shown (it comes back if the
+  // discount is cleared), so the row never shows two struck prices.
+  function isOneTimeWidgetPrice(el) {
+    if (el.classList && el.classList.contains("appstle_onetime_amount")) {
+      return true;
+    }
+    var wrap = el.closest
+      ? el.closest(".appstle_input_wrapper, label")
+      : null;
+    if (!wrap) return false;
+    var radio = wrap.querySelector
+      ? wrap.querySelector('input[name="selling_plan"][value=""]')
+      : null;
+    return !!radio;
+  }
+
+  function setOneTimeCompareHidden(el, hidden) {
+    var container =
+      (el.closest && (el.closest("label") || el.closest(".appstle_input_wrapper"))) ||
+      el.parentNode;
+    if (!container || !container.querySelectorAll) return;
+    container
+      .querySelectorAll(".appstle_onetime_amount_compare")
+      .forEach(function (cmp) {
+        cmp.style.display = hidden ? "none" : "";
+      });
+  }
+
+  function applyWidgetOneTime(el, o, s, cfg, handled) {
+    if (s >= o) {
+      if (el._ddWidgetOriginal !== undefined) {
+        el.innerHTML = el._ddWidgetOriginal;
+        delete el._ddWidgetOriginal;
+      }
+      el.removeAttribute("data-dd-widget-key");
+      setOneTimeCompareHidden(el, false);
+      return;
+    }
+    var key = o + "|" + s + "|" + cfgSignature(cfg);
+    // Appstle re-renders this span's text on variant change, which wipes
+    // our spans but leaves the key attribute — require our markup too.
+    if (
+      el.getAttribute("data-dd-widget-key") === key &&
+      el.querySelector(".dd-sale")
+    ) {
+      setOneTimeCompareHidden(el, true);
+      if (handled) handled.add(el);
+      return;
+    }
+    if (el._ddWidgetOriginal === undefined) el._ddWidgetOriginal = el.innerHTML;
+    el.innerHTML = priceInnerHtml(o, s, cfg);
+    el.setAttribute("data-dd-widget-key", key);
+    setOneTimeCompareHidden(el, true);
+    if (handled) handled.add(el);
+  }
+
+  function updateWidgetOneTime(prices, handled) {
+    if (!prices) return;
+    var cfg = slotCfg("widgetOneTime");
+    var selector = selectorList(slotSelectors("widgetOneTime"), null);
+    if (!selector) return;
+    document.querySelectorAll(selector).forEach(function (el) {
+      if (!isOneTimeWidgetPrice(el)) return;
+      applyWidgetOneTime(el, prices.o, prices.s, cfg, handled);
+    });
   }
 
   // Which purchase mode is this price element showing? Landing-page buy
@@ -278,7 +498,7 @@
     return Math.abs(n - o) < 0.011 || Math.abs(n - s) < 0.011;
   }
 
-  function maybeApply(el, prices) {
+  function maybeApply(el, prices, cfg, handled) {
     if (!prices) return;
     var o = prices.o,
       s = prices.s;
@@ -289,7 +509,7 @@
     var mode = purchaseModeFor(el);
     if (mode === "subscribe") return;
     if (mode === null && !looksOneTime(el, o, s)) return;
-    apply(el, o, s);
+    apply(el, o, s, cfg, handled);
   }
 
   function handleFromUrl(url) {
@@ -429,14 +649,12 @@
     return "onetime";
   }
 
-  // Rewrite only the % number inside a starburst badge
-  // (<div class="burst"><span>SAVE<br>20%</span></div>). The shape, text
-  // and position are never changed — just the number.
-  function setBurstPct(pct) {
-    if (!(pct > 0)) return;
-    var badgeSelector = selectorList(S.landingBadgeSelectors, ".burst");
-    if (!badgeSelector) return;
-    document.querySelectorAll(badgeSelector).forEach(function (el) {
+  // Rewrite only the % number inside a theme badge (the starburst, or a
+  // "Save 24% + Free Shipping" pill). The badge shape, text and position
+  // are never changed — just the number.
+  function setPctInElements(selector, pct) {
+    if (!(pct > 0) || !selector) return;
+    document.querySelectorAll(selector).forEach(function (el) {
       var target = el.querySelector("span") || el;
       var html = target.innerHTML;
       if (!/(\d+(?:\.\d+)?)%/.test(html)) return;
@@ -447,8 +665,9 @@
 
   // Landing-page badges follow the selected purchase mode, using the
   // dynamic % from the synced metafield (never a hardcoded number):
-  //  - the starburst shows the SELECTED mode's % (one-time % when
-  //    One-time is picked, subscribe % when Subscribe & Save is picked);
+  //  - the starburst and the CTA "Save %" pills show the SELECTED mode's
+  //    % (one-time % when One-time is picked, subscribe % when Subscribe
+  //    & Save is picked);
   //  - each buy-box row's own Save pill shows its own mode's dynamic %.
   // Runs on load and on every purchase-type change (run() is re-invoked
   // by the change/click listeners and the MutationObserver below).
@@ -460,7 +679,20 @@
     var burstPct =
       mode === "subscribe" ? lp.spp || null : lp.op || null;
     if (!burstPct) burstPct = lp.op || lp.spp || null;
-    if (burstPct) setBurstPct(burstPct);
+    if (burstPct) {
+      if (slotCfg("burst").showBadge) {
+        setPctInElements(
+          selectorList(slotSelectors("burst"), ".burst"),
+          burstPct,
+        );
+      }
+      if (slotCfg("ctaPill").showBadge) {
+        setPctInElements(
+          selectorList(slotSelectors("ctaPill"), null),
+          burstPct,
+        );
+      }
+    }
     // Each row's Save pill shows its own mode's dynamic %. (The one-time
     // row is usually already rewritten by the app into its own badge, in
     // which case there is no theme pill left here to update.) Only write
@@ -488,19 +720,92 @@
       });
   }
 
+  // Global catch-all: resolve the price for an element no specific slot
+  // claimed, the same way the specific slots do (card link, product form,
+  // then landing prices). Specific slots always win — run() passes the
+  // set of elements they already rewrote.
+  function maybeApplyGlobal(el, cfg, handled) {
+    if (handled.has(el)) return;
+    var a = cardLinkFor(el);
+    if (a) {
+      var h = handleFromUrl(a.getAttribute("href"));
+      if (h && P[h]) {
+        var variantId = variantIdFromUrl(a.href);
+        var cardPrices = variantId
+          ? priceFor(P[h], variantId)
+          : P[h].card || null;
+        if (cardPrices) {
+          maybeApply(el, cardPrices, cfg, handled);
+          return;
+        }
+      }
+    }
+    var pageHandle = handleFromUrl(location.pathname);
+    if (pageHandle && P[pageHandle]) {
+      var entry = P[pageHandle];
+      var pf = productFormFor(entry);
+      if (pf) {
+        var idInput = pf.form.querySelector('[name="id"]');
+        var vid =
+          (idInput && idInput.value) || variantIdFromUrl(location.href);
+        var prices = priceFor(entry, vid);
+        if (prices) {
+          maybeApply(el, prices, cfg, handled);
+          return;
+        }
+      }
+    }
+    if (S.showOnLandingPages) {
+      var lp = landingPrices();
+      if (lp) maybeApply(el, lp, cfg, handled);
+    }
+  }
+
   function run() {
     injectCustomCss();
-    injectAppstleBadgeCss();
-    restyleAppstleBadge();
     updateLandingBadges();
 
-    // Landing pages (buy boxes and other one-time prices).
+    // Elements a specific slot already rewrote this run — the global
+    // catch-all below skips them, so no price is ever rewritten twice.
+    var handled = new Set();
+
+    // Landing pages (buy boxes, static CTA text, price line).
     if (S.showOnLandingPages) {
-      var landingSelector = selectorList(S.landingSelectors, null);
-      if (landingSelector) {
-        var lp = landingPrices();
+      var lp = landingPrices();
+      var landingSelector = selectorList(slotSelectors("landing"), null);
+      if (landingSelector && lp) {
+        var landingCfg = slotCfg("landing");
         document.querySelectorAll(landingSelector).forEach(function (el) {
-          maybeApply(el, lp);
+          // The buy-box price line (.price-line .now) is a single shared
+          // display, not a per-row price: it follows the SELECTED mode.
+          // One-time selected shows the one-time sale; Subscribe selected
+          // shows the subscribe sale (struck original + its badge, the
+          // same layout as the row). Per-row prices below keep the
+          // one-time-only rule — a subscribe row's price is never touched.
+          var line = el.closest ? el.closest(".price-line") : null;
+          var isPriceLine =
+            line && el.classList && el.classList.contains("now");
+          if (isPriceLine) {
+            var lineMode = landingSelectedMode();
+            var lineSale =
+              lineMode === "subscribe" && lp.sp != null ? lp.sp : lp.s;
+            apply(el, lp.o, lineSale, landingCfg, handled);
+            if (el.querySelector(".dd-wrap")) {
+              line.setAttribute(
+                "aria-label",
+                "Price: " + money(lineSale) + ", was " + money(lp.o),
+              );
+            }
+            return;
+          }
+          maybeApply(el, lp, landingCfg, handled);
+        });
+      }
+      var ctaSelector = selectorList(slotSelectors("cta"), null);
+      if (ctaSelector) {
+        var ctaCfg = slotCfg("cta");
+        document.querySelectorAll(ctaSelector).forEach(function (el) {
+          applyStaticText(el, lp, ctaCfg, handled);
         });
       }
     }
@@ -515,12 +820,10 @@
         var idInput = form.querySelector('[name="id"]');
         var vid = (idInput && idInput.value) || variantIdFromUrl(location.href);
         var prices = priceFor(entry, vid);
-        var productSelector = selectorList(
-          S.productSelectors,
-          S.productSelector || ".price",
-        );
+        var productSelector = selectorList(slotSelectors("product"), ".price");
         if (productSelector && prices) {
           var mode = productPageMode();
+          var productCfg = slotCfg("product");
           productForm.scope
             .querySelectorAll(productSelector)
             .forEach(function (el) {
@@ -531,18 +834,18 @@
                 unapply(el);
                 return;
               }
-              maybeApply(el, prices);
+              maybeApply(el, prices, productCfg, handled);
             });
         }
+        // Appstle widget one-time row — rewritten whatever mode is
+        // selected, because the row always shows the one-time price.
+        if (prices) updateWidgetOneTime(prices, handled);
       }
     }
 
     // Product cards
     if (S.showOnCards) {
-      var cardSelector = selectorList(
-        S.cardSelectors,
-        S.cardSelector || ".price",
-      );
+      var cardSelector = selectorList(slotSelectors("card"), ".price");
       // This theme's /collections/all grid is a custom section whose price
       // is .bt-collection-grid__price, not .price — include it alongside
       // the merchant-configured selectors so those cards get the discount
@@ -551,18 +854,29 @@
       if (cardSelector) {
         cardSelector += ", .bt-collection-grid__price";
       }
-      if (!cardSelector) return;
-      document.querySelectorAll(cardSelector).forEach(function (el) {
-        var a = cardLinkFor(el);
-        if (!a) return;
-        var h = handleFromUrl(a.getAttribute("href"));
-        if (!h || !P[h]) return;
+      if (cardSelector) {
+        var cardCfg = slotCfg("card");
+        document.querySelectorAll(cardSelector).forEach(function (el) {
+          var a = cardLinkFor(el);
+          if (!a) return;
+          var h = handleFromUrl(a.getAttribute("href"));
+          if (!h || !P[h]) return;
 
-        var variantId = variantIdFromUrl(a.href);
-        var cardPrices = variantId
-          ? priceFor(P[h], variantId)
-          : P[h].card || null;
-        if (cardPrices) maybeApply(el, cardPrices);
+          var variantId = variantIdFromUrl(a.href);
+          var cardPrices = variantId
+            ? priceFor(P[h], variantId)
+            : P[h].card || null;
+          if (cardPrices) maybeApply(el, cardPrices, cardCfg, handled);
+        });
+      }
+    }
+
+    // Global catch-all — only elements no specific slot claimed.
+    var globalSelector = selectorList(slotSelectors("global"), null);
+    if (globalSelector) {
+      var globalCfg = slotCfg("global");
+      document.querySelectorAll(globalSelector).forEach(function (el) {
+        maybeApplyGlobal(el, globalCfg, handled);
       });
     }
   }

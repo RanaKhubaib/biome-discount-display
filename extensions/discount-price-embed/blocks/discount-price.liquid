@@ -3,9 +3,14 @@
 
 {% if cfg.enabled %}
   <style>
-    .dd-orig { opacity: 0.6; margin-right: 0.4em; }
+    /* Price order is sale first, then the struck original, then the badge
+       (or original first when a slot is set that way) — spacing is between
+       the parts, whichever order they render in. */
+    .dd-wrap > * { margin-right: 0.4em; }
+    .dd-wrap > *:last-child { margin-right: 0; }
+    .dd-orig { opacity: 0.6; }
     .dd-sale { font-weight: 600; }
-    .dd-badge { display: inline-block; margin-left: 8px; padding: 2px 8px; border-radius: 999px; font-size: .72rem; font-weight: 800; letter-spacing: .04em; vertical-align: 2px; white-space: nowrap; }
+    .dd-badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: .72rem; font-weight: 800; letter-spacing: .04em; vertical-align: 2px; white-space: nowrap; }
     .dd-badge--rounded { border-radius: 6px; }
     .dd-badge--square { border-radius: 2px; }
     .dd-badge--small { font-size: .62rem; padding: 1px 6px; }
