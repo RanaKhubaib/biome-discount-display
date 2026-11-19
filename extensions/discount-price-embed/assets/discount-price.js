@@ -146,18 +146,52 @@
   // The sr-only spans (.appstle_subscription_amount-appstle-sr-only) are
   // different class tokens, so they are not matched by these selectors.
   // !important is needed because Appstle's own widget CSS and merchant
-  // custom CSS colour these spans; our selectors are more specific than
-  // a bare class rule (two classes vs one) and this <style> is appended
-  // after Appstle's, so it wins ties.
-  // If Appstle ever renames these classes, the rule silently stops
+  // custom CSS colour these spans. Specificity is the trap (v15):
+  // Appstle's own stylesheet colours the subscribe sale with an
+  // ID-scoped rule — :is(#appstle_subscription_widget0,
+  // [id^="appstle_subscription_widget"]) ... .appstle_subscription_amount
+  // { color: var(--as-price-color, ...) !important; } — specificity
+  // (1,1,0), and --as-price-color is set to #ff0303 (red) in Appstle's
+  // theme settings. The v14 two-class rules (0,2,0) lost to it, so the
+  // product-page Subscribe row stayed red live even though the rules
+  // were correct (the landings passed because the theme's red rule there
+  // is single-class). The ID-scoped rules below are (1,2,0) and win
+  // regardless of style order. The unscoped two-class rules are kept as
+  // a fallback: they beat the merchant's single-class #ff0000 rule if
+  // Appstle ever renames the widget id. The compare is the same story —
+  // Appstle's own (1,1,0) rule resolves --as-compare (#535353), so the
+  // v14 compare rule also lost; it only looked right because #535353
+  // happens to be grayish. The ID-scoped compare rule below makes it
+  // deterministically the app's compare colour.
+  // If Appstle ever renames these classes, the rules silently stop
   // matching and the row falls back to Appstle's own colours — it can
   // never break a price value.
   function injectSubscribePriceColors() {
+    // Same :is() scoping Appstle's own stylesheet uses, so these rules
+    // match every widget instance (widget0, widget1, ...) on the page.
+    var widgetScope =
+      ':is(#appstle_subscription_widget0, [id^="appstle_subscription_widget"])';
     var css =
+      widgetScope +
+      " .appstle_subscription_amount_wrapper .appstle_subscription_amount{color:" +
+      saleColor +
+      " !important}" +
+      widgetScope +
+      " .appstle_subscription_amount_wrapper .appstle_subscription_compare_amount{color:" +
+      compareColor +
+      " !important}" +
       ".appstle_subscription_amount_wrapper .appstle_subscription_amount{color:" +
       saleColor +
       " !important}" +
       ".appstle_subscription_amount_wrapper .appstle_subscription_compare_amount{color:" +
+      compareColor +
+      " !important}" +
+      widgetScope +
+      " .appstle_sellingPlan_price.appstle_price_block{color:" +
+      saleColor +
+      " !important}" +
+      widgetScope +
+      " .appstle_sellingPlan_formattedCompareAtPrice.appstle_price_block{color:" +
       compareColor +
       " !important}" +
       ".appstle_sellingPlan_price.appstle_price_block{color:" +
@@ -516,8 +550,27 @@
         html += escapeHtml(text.slice(last, m.index));
         // priceInnerHtml derives the badge % from original/sale, which
         // is the token's own % (one-time % or subscribe %) — never typed in.
-        html += priceInnerHtml(lp.o, target.sale, cfg);
-        last = m.index + m[0].length;
+        //
+        // The expanded price is wrapped in one inline span
+        // (.dd-static-price) so a flex button's gap cannot split the
+        // price parts — and so a following comma (", Free Shipping")
+        // stays attached to the badge instead of becoming a separate
+        // flex item with a gap before it. Caffeine Free's hero renders
+        // "Save 20% , Free Shipping" without this: .btn is
+        // display:inline-flex with gap:10px, and the bare ", Free
+        // Shipping" text node becomes an anonymous flex item. A leading
+        // punctuation character right after the token is moved inside
+        // the wrapper; the rest of the trailing text stays outside.
+        var afterToken = text.slice(m.index + m[0].length);
+        var punct = "";
+        var punctMatch = afterToken.match(/^([,;:])/);
+        if (punctMatch) punct = punctMatch[1];
+        html +=
+          '<span class="dd-static-price">' +
+          priceInnerHtml(lp.o, target.sale, cfg) +
+          escapeHtml(punct) +
+          "</span>";
+        last = m.index + m[0].length + punct.length;
         nodeChanged = true;
       }
       if (!nodeChanged) return;

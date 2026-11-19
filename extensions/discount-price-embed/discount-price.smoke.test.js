@@ -1510,3 +1510,134 @@ test("v14 buy-box heading % follows the purchase-mode toggle", async () => {
     dom.window.close();
   }
 });
+
+test("v15 subscribe row: injection uses ID-scoped rules that beat Appstle's own stylesheet", () => {
+  // v15 root cause (verified against the live pilot product page):
+  // Appstle's own stylesheet colours the subscribe sale with an
+  // ID-scoped rule — :is(#appstle_subscription_widget0,
+  // [id^="appstle_subscription_widget"]) ...
+  // .appstle_subscription_amount { color: var(--as-price-color) } —
+  // specificity (1,1,0), and --as-price-color is #ff0303 (red) in
+  // Appstle's theme settings. The v14 two-class rules (0,2,0) lost to
+  // it, so the product-page Subscribe row stayed red live even though
+  // the rules were correct (the landings passed because the theme's red
+  // rule there is single-class). The ID-scoped rules below are (1,2,0)
+  // and win regardless of style order.
+  const dom = runPage(
+    PRODUCT_HTML_WIDGET_TYPE_2,
+    `https://biometheory.shop/products/${HANDLE}`,
+    baseSettings(),
+    basePrices(),
+  );
+  try {
+    const doc = dom.window.document;
+    const style = doc.getElementById("dd-subscribe-price-colors");
+    assert.ok(style, "expected the subscribe-price-colours style element");
+    const scope =
+      ':is(#appstle_subscription_widget0, [id^="appstle_subscription_widget"])';
+    // ID-scoped WIDGET_TYPE_2 rules (the fix) — sale and compare.
+    assert.ok(
+      style.textContent.includes(
+        `${scope} .appstle_subscription_amount_wrapper .appstle_subscription_amount{color:#000000 !important}`,
+      ),
+      "expected the ID-scoped subscribe sale rule",
+    );
+    assert.ok(
+      style.textContent.includes(
+        `${scope} .appstle_subscription_amount_wrapper .appstle_subscription_compare_amount{color:#6b7280 !important}`,
+      ),
+      "expected the ID-scoped subscribe compare rule",
+    );
+    // ID-scoped Mustache rules too.
+    assert.ok(
+      style.textContent.includes(
+        `${scope} .appstle_sellingPlan_price.appstle_price_block{color:#000000 !important}`,
+      ),
+      "expected the ID-scoped Mustache sale rule",
+    );
+    // Unscoped two-class rules kept as a fallback — they beat the
+    // merchant's single-class #ff0000 rule if Appstle renames the id.
+    assert.match(
+      style.textContent,
+      /\.appstle_subscription_amount_wrapper \.appstle_subscription_amount\{color:#000000 !important\}/,
+    );
+    // Values still untouched.
+    assert.equal(
+      doc.querySelector(
+        ".appstle_subscription_amount_wrapper .appstle_subscription_amount",
+      ).textContent,
+      "$47.98",
+    );
+    assert.equal(
+      doc.querySelector(
+        ".appstle_subscription_amount_wrapper .appstle_subscription_compare_amount",
+      ).textContent,
+      "$59.97",
+    );
+  } finally {
+    dom.window.close();
+  }
+});
+
+test("v15 static text: expanded price is one group and a following comma stays attached (Caffeine Free hero)", async () => {
+  // Caffeine Free's hero: "Try the 3pm Swap — $59.97, Free Shipping".
+  // .btn is display:inline-flex with gap:10px, so the bare
+  // ", Free Shipping" text node became an anonymous flex item and the
+  // button rendered "Save 20% , Free Shipping" (gap before the comma).
+  // The expanded price is now one .dd-static-price group and the comma
+  // moves inside it, so the comma stays attached to the badge.
+  const html = `
+  <div class="shopify-section"><section class="bb gutter" id="buy">
+    <div class="cta-wrap">
+      <a class="btn" href="#buy" id="heroCta">Try the 3pm Swap — $59.97, Free Shipping</a>
+    </div>
+    <div class="price-line" aria-label="Price: $59.97, was $78.93">
+      <span class="now">$59.97</span><s class="was"></s>
+    </div>
+    <input type="radio" name="cf-purchase" value="onetime">
+    <input type="radio" name="cf-purchase" value="subscribe" checked>
+  </section></div>`;
+  const dom = runPage(
+    html,
+    "https://biometheory.shop/pages/biome-caffeine-free",
+    baseSettings(),
+    basePrices(),
+    (window) => {
+      window.document.body.dataset.flavor = "mango";
+      window.CF_PRODUCTS = { mango: { variant: VARIANT } };
+    },
+  );
+  try {
+    const doc = dom.window.document;
+    const hero = doc.querySelector("#heroCta");
+    // Subscribe selected on load.
+    const group = hero.querySelector(".dd-static-price");
+    assert.ok(
+      group,
+      "expected the expanded price in one .dd-static-price group",
+    );
+    assert.equal(group.querySelector(".dd-sale").textContent, "$47.98");
+    assert.equal(group.querySelector(".dd-orig").textContent, "$59.97");
+    assert.equal(group.querySelector(".dd-badge").textContent, "Save 20%");
+    // The comma is INSIDE the group, directly after the badge — no gap
+    // can appear before it in a flex button.
+    assert.match(group.textContent, /Save 20%,$/);
+    // The full button text has no space before the comma.
+    assert.match(hero.textContent, /Save 20%, Free Shipping/);
+    assert.doesNotMatch(hero.textContent, /Save 20% ,/);
+    // Toggle to One-time: group re-derives, comma still attached.
+    doc.querySelector('input[name="cf-purchase"][value="onetime"]').checked =
+      true;
+    doc.querySelector('input[name="cf-purchase"][value="subscribe"]').checked =
+      false;
+    doc.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+    await sleep(150);
+    const group2 = hero.querySelector(".dd-static-price");
+    assert.equal(group2.querySelector(".dd-sale").textContent, "$50.97");
+    assert.equal(group2.querySelector(".dd-badge").textContent, "Save 15%");
+    assert.match(group2.textContent, /Save 15%,$/);
+    assert.match(hero.textContent, /Save 15%, Free Shipping/);
+  } finally {
+    dom.window.close();
+  }
+});
