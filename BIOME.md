@@ -158,6 +158,114 @@ the release prompt for ~6 min (no log output) until Up+Enter was sent —
 the prompt is the only interactive step; if a future deploy looks hung,
 send Up+Enter rather than assuming it failed.
 
+## v14 — Real Subscribe-row selectors, mode-direct final CTA, buy-heading % follows toggle (2026-11-19, app phase only)
+
+The v13 browser tour (11:35–11:53 PKT) PASSED most things but left three
+defects, all app-side, all systemic. Root causes were all verified against
+live sources (pilot preview HTML via curl, Appstle's own
+appstle-subscription.min.js, the theme's *-base sections) — not guessed.
+
+FIX 1 — SUBSCRIBE ROW RED. Product page + 7 of 8 landings showed the
+Subscribe row $47.98 RED; Enzymes alone looked black.
+ROOT CAUSE (two separate causes, one per surface):
+(a) Product page: the v13 injection's WIDGET_TYPE_2 selectors named
+`.appstle_subscription_price_wrapper` and
+`.appstle_subscription_amount_compare_at_price`. NEITHER exists anywhere
+in Appstle's JS (0 occurrences) — the live subscribe price lives in
+`.appstle_subscription_amount_wrapper`, holding
+`.appstle_subscription_amount` (sale) and
+`.appstle_subscription_compare_amount` (compare);
+`..._compare_at_price` is the ONE-TIME wrapper's compare class
+(`.appstle_one_time_price_wrapper`). So the v13 rules matched nothing
+and the row stayed red under Appstle's merchant custom CSS
+(`.appstle_subscription_amount { color: #ff0000 !important; }`). The
+v13 test fixture had invented the wrong wrapper class, which is how the
+bug shipped — the fixture is now corrected to Appstle's real template.
+(b) Landings: the native replica buy boxes are not Appstle widgets, so
+no Appstle selector can ever match them. Their Subscribe row is
+`.purchase-opt[data-purchase-opt="subscribe"] .purchase-price` with
+`[data-sub-price]` / `[data-sub-was]` spans, and the theme colours
+`.purchase-price` red (`color:#d82c0d`) on 7 pages — the one-time row
+escapes it only because the app rewrites it with inline black. Enzymes
+alone looked black because its buy section sets
+`.purchase-price{color:#42572A}` (dark green), not red.
+FIX (discount-price.js, injectSubscribePriceColors only): WIDGET_TYPE_2
+rules now use the real `.appstle_subscription_amount_wrapper` +
+`.appstle_subscription_compare_amount`; Mustache rules unchanged
+(`.appstle_price_block`); NEW landing rules
+`.purchase-opt[data-purchase-opt="subscribe"] .purchase-price
+[data-sub-price]{color:<sale> !important}` and `[data-sub-was]` with the
+compare colour — two-class selectors + !important beat both the theme's
+single-class red rule and Appstle's single-class red rule. Scoped to
+the subscribe option only; the one-time row is untouched. Colour only:
+the gaps already exist (Appstle's own `margin-left: 6px` on its compare
+span; the theme's `gap: 4px 10px` flex gap on `.purchase-price`).
+
+FIX 2 — FINAL/BOTTOM CTA STALE. All 8 final CTAs stayed at $47.98 /
+Save 20% in One-time mode (correct only in Subscribe mode).
+ROOT CAUSE: the theme rewrites `.final-price` / `.sticky-price` with
+plain text on every toggle and flavour change (syncCtaPrices in the
+*-base sections), so the app's saved "original" for those spans can
+itself be the subscribe price — and the v13 TOKEN-based mapping
+($47.98 token → subscribe sale) re-derived the subscribe sale even in
+One-time mode. Hero links worked because the theme never rewrites them.
+FIX: staticTargetFor is now MODE-DIRECT — any recognised price token
+(original, one-time sale, or subscribe sale) maps to the SELECTED
+mode's sale; the mode is the source of truth, not the token.
+Unrecognised numbers ("$2.40 a glass") are still left alone, and the
+no-mode fallback keeps the old token behaviour. Same mechanism as the
+v13 hero fix, extended to tokens the theme itself writes.
+
+FIX 3 — STATIC "Save 20% + Free Shipping" HEADINGS. On Gut First, Gut
+Health 2, Probiotics 2 and Taste 2 the buy-box <h2> (head_2 setting,
+e.g. "Start With Your Gut. Save 20% + Free Shipping.") stayed on 20%
+in One-time mode. It is static theme copy in the heading, not a .pill,
+so the CTA-pill rewrite never touched it. (The .pill / .oc-tag copies
+already followed the mode via the ctaPill slot.) FIX: updateLandingBadges
+now also rewrites the % inside `#buy .bb-head h2 span, #buy .sec-h h2
+span` to the selected mode's % (same dynamic burstPct as burst/pills,
+from the synced data, never typed in). Verified from the rendered pages
+that these four are the ONLY h2s with a % anywhere, and
+setPctInElements only writes when a % is present, so headings without
+one — and the other four pages' buy headings — are untouched.
+
+TESTS (run 2026-11-19): node --check OK; smoke 28/28 (24 existing + 4
+new: landing Subscribe row recoloured on a red-theme page; same on
+Enzymes' dark-green theme; final CTA follows the toggle both ways while
+the theme rewrites its price as plain text; buy-box heading % follows
+the toggle, %-less headings untouched); discount-sync 15/15;
+production build OK. The WIDGET_TYPE_2 fixture now uses Appstle's real
+subscribe markup, and the v13 subscribe-row test asserts the injected
+CSS contains NO `.appstle_subscription_price_wrapper` rule. Script
+49,113 bytes, SHA-256 f8982076b318a22a21bebc4b029308f0a8d391c47795f56dde2a4607b515e81c.
+PUSH: GitHub commit b1693ba099a050ec814674d50c17a6b299565d4a on main
+(2 files, push_files only, provenance-checked: remote head was
+f6ca01a8 — one docs commit ahead of the brief's c966d67c — remote
+content of both files fetched and diffed, diff was exactly this fix, no
+divergence; read back byte-identical, SHA-256 match; sync record
+updated, 15 entries). DEPLOY: extension biome-discount-display-14
+(https://dev.shopify.com/dashboard/140278598/apps/449145503745/versions/1248054116353).
+CDN byte-check PASSED on the first fetch: pilot preview product page
+loads .../biome-discount-display-14/assets/discount-price.js (49,113
+bytes), SHA-256 identical to local (f8982076…); markers
+appstle_subscription_amount_wrapper ×3, landing subscribe rules
+present, `#buy .bb-head h2 span` present, isKnownPrice ×2, the one
+appstle_subscription_price_wrapper occurrence is a code comment only.
+Deploy note: the Shopify CLI had vanished from /usr/bin again (VM
+replaced); reinstalled with `npm install -g @shopify/cli` (5.0.2) and
+the stored session was reused. The deploy sat silent at the release
+prompt until Up+Enter was sent, as in v9/v10. Nothing published; live
+theme, discounts and Appstle plans untouched.
+Parent runs it next: product-page Subscribe row $47.98 BLACK + $59.97
+struck grayish with a gap, values/badge unchanged, first load + reload,
+both modes; landing Subscribe rows black/grayish on all 8 pages (incl.
+Enzymes still black); final CTA flips $47.98/Save 20% ↔ $50.97/Save
+15% on toggle both ways on all 8 pages; buy headings on GF/GH2/PB2/T2
+show Save 15% in One-time mode, Save 20% in Subscribe mode. Live
+browser verification is the only check jsdom cannot do (it cannot
+compute colours) — the colour assertions rest on the injected rule text
+(specificity + !important beating the red rules).
+
 ## v13 — Hero / section links follow the purchase-mode toggle (2026-11-19, app phase only, NOT yet deployed)
 
 DEFECT (last open item from the 06:01 PKT "what's left" list, besides the
@@ -360,6 +468,35 @@ main price one-time mode black/grayish + gap; hero CTA button prices
 no longer cramped; landing buy boxes / price line / cards the same;
 reload + toggle both ways. Nothing published; live theme, discounts
 and Appstle plans untouched.
+
+## v13 (part 3) — Theme restyle: neon widgets, #7DFDA3 buttons, centred countdown (2026-11-19, theme phase only, pilot draft only)
+
+Pilot draft 169102147801 only. Live MAIN 168607187161 untouched, nothing published, no discount/Appstle/price-strategy change, app code untouched. 30/30 files uploaded with SHA-256 MATCH on re-read. Work files: ~/workspace/biome-pilot-rollout/restyle-2026-11-19/ (edit scripts + upload verifier + local copies); backup/revert note ~/workspace/backups/biome-theory/landing-restyle-2026-11-19.md (revert = delete pilot draft).
+
+COLOURS & SIZES (all read from the live product page, not guessed — Appstle WIDGET_TYPE_2 CSS vars in the page HTML): selected card bg #ebfceb, border #7dfda3 (2px), lightest fill #f4fcf6, selected accent #78f39d, badge pill bg #42572a / text #ffffff, unselected card white. Button text #000000 (from blocks/bt-subscription-widget.liquid save-badge defaults: #7DFDA3 bg / #000000 text).
+- Buy-box container: bg #ebfceb, border 2px #7dfda3.
+- Option row unselected: bg #f4fcf6, border 1px #7dfda3. Selected: bg #ebfceb, border 2px #7dfda3 + inset ring.
+- Buttons (all landing): bg #7DFDA3, text #000000; hover stays #7DFDA3; .btn.added keeps dark-green bg + white text.
+- Flavour selected (.flav cards/pills + .fin-flav final pills): bg #ebfceb (cards) / #7DFDA3 (final pills on dark), border 2px #7dfda3; unselected stays clean white.
+- Buy-box price: 1.25rem (20px) — main product price is 1.25rem from templates/product.json price block (font_size: 1.25rem); was 1.15rem (18.4px), mobile 1.05rem → 1.25rem both.
+- Countdown bar: centred stacked column — "BLACK FRIDAY SALE" → "Get 20% discount until it ends in" → timer; end date/ticking untouched (2026-12-01T23:59:59-05:00).
+
+FILES CHANGED (30, pilot only):
+- 8 buy/hero: biome-{gut-first, gut-health-2, probiotics-2, taste-2, caffeine-free, mom-story, routine}-buy.liquid + biome-enzymes-hero.liquid — widget colours, price 1.25rem, #buy .btn mobile fit, schema defaults (btn_bg #7DFDA3, btn_text #000000, buybox_bg #ebfceb, buybox_border #7dfda3).
+- 8 base: biome-*-base.liquid — .btn/.btn.light/.stick .btn/.outline-btn → #7DFDA3 + #000000, .flav/.fin-flav selected neon, white-space:nowrap on #buy .btn,.stick .btn,.final-card .btn, JS P price 59.97 → dynamic {{ variant.price }}, deleted dead _disc = 24 assigns (4 files).
+- 8 final: biome-*-final.liquid — bursts now read the Appstle 'Every Month' plan % (same loop as buy files), fallback 20.
+- Countdown: snippets/bt-countdown.liquid (bar → stacked centred), sections/bt-countdown-bar.liquid (subtext default = exact text), sections/header-group.json (stored subtext set; also fixed disabled bt-announcement 36%→20%), sections/bt-announcement.liquid (default 36%→20%).
+- Templates: page.biome-enzymes.json (stored btn/buybox colours → new values), page.biome-gut-health-2.json (onetime_pct 0 → 15 — see flag).
+
+VERIFICATION: Upload 30/30 SHA-256 MATCH. All edited schemas/templates JSON-parse; {% %} balanced. CDN/preview (curl -L + cookie jar, ?preview_theme_id=169102147801): Gut First, Enzymes, Caffeine Free, Mom Story, Routine previews all serve the new code — 15× #7DFDA3, stacked-bar CSS rule, subtext present with heading → subtext → timer order, end date still 2026-12-01T23:59:59-05:00. Live page (no preview param) has 0× the subtext — pilot vs live confirmed distinct. GH2 preview confirms the sync fix: data-ot-mango="5097" ($50.97), data-sub-mango="4798". Rendered bursts show SAVE<br>20% — that is the plan value rendering, not a leftover literal.
+DYNAMIC AUDIT: zero hardcoded $ prices in landing files; fixed literal SAVE<br>20% bursts (3 buy files), {% else %}20%{% endif %} burst fallbacks (3 finals), _disc = 20 fallbacks (5 finals), dead _disc = 24 (4 bases), hardcoded JS price: 59.97 (8 bases). Cart line verified still "20% off your first order, 15% off every renewal" (templates/cart.json + bt-cart-perks, no 36%). sale_color left untouched (app owns price colours). onetime_pct/sub_first_pct/renew_pct schema defaults 15/20/15 in sync across all 8 pages.
+
+FLAGS:
+1. GH2 onetime_pct 0 → 15 — judgment call: GH2's template stored 0 (one-time would compute $59.97) while the other 7 pages store/default 15 and Nov 18 verified $50.97 on all 8. Set to 15; if it was deliberate, revert that one value in templates/page.biome-gut-health-2.json.
+2. Nov 26 copy still manual: "Save 20% + Free Shipping" text (11 head_2/pill settings) and the new countdown subtext "Get 20% discount…" are editable settings, not dynamic — they need a % update at the switch (sub 30% / one-time 25%). Bursts now follow the Appstle plan automatically; onetime_pct 15→25 is the Nov 26 theme flip.
+3. Left alone deliberately: .link-btn (text links), .unmute/.qdots (icon controls), hero anchor CTAs keep wrapping (CF's "Try the 3pm Swap — $59.97, Free Shipping" is too long to fit one line on mobile — nowrap applied only to ATC/sticky/final buttons); biome-lander.css not loaded by the 8 pages; the app owns the price gap inside the ATC button and the Save badge rendering.
+4. CODE-REVIEW RISKS (not fixable here): theme toggle JS rewrites [data-ot-price] etc. from theme data attributes on flavour/mode switch — if the discount app doesn't re-observe after a toggle, prices could briefly show theme-computed values (identical today except the GH2 case, now fixed); Appstle fills its pill after the app runs (known v11 race pattern) — same caution applies to the app's button rewrite; .btn selectors/classes unchanged, so no app-selector breakage. value_line "$2.40 a serving" is static copy (full-price basis), untouched.
+5. Browser test tour still needed (parent runs it): visual check of the restyle on desktop + ~390px mobile, and the ATC fold on a real narrow viewport.
 
 ## v12 — One-time row: NEVER add an app badge in the widget one-time row (2026-11-19)
 
