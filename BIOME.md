@@ -214,11 +214,25 @@ inline style contains `margin-right:0`, the node right after the badge
 is exactly the `","` text node, and the liquid rule is inline-flex
 gap:0, in BOTH modes (Subscribe `$47.98` / Save 20% and One-time
 `$50.97` / Save 15%). jsdom repro (both modes) confirms the same.
-`node --check` OK, smoke 33/33, sync 15/15, build OK. Deployed:
-extension biome-discount-display-17 (version page TBD). CDN byte-check:
-pilot preview loads `.../biome-discount-display-17/assets/discount-price.js`,
-SHA-256 identical to local, `v16|` + `margin-right:0` + inline-flex
-markers present. RE-CHECK (browser, pilot preview, judge by PIXELS at
+`node --check` OK, smoke 33/33, sync 15/15, build OK. GitHub main
+`266626e2` (4 files: JS, liquid, smoke test, BIOME.md — provenance
+checked: branch head matched the recorded SHA `30731160` before
+pushing; remote diffs were exactly the v17 edits; note the liquid file
+had never appeared in the sync record, but its remote content at head
+was the pre-v17 state, so no divergence). Deployed: extension
+biome-discount-display-17
+(https://dev.shopify.com/dashboard/140278598/apps/449145503745/versions/1248184303617).
+CDN byte-check: pilot preview CF page loads
+`.../biome-discount-display-17/assets/discount-price.js` (56,310
+bytes), SHA-256 identical to local (`6794e0fd…`), `margin-right:0` and
+`v16|` markers present, and the served preview HTML carries the new
+liquid rule (`.dd-static-price { display: inline-flex; align-items:
+baseline; gap: 0; white-space: nowrap; }`). Deploy note: the first
+push-files attempt was interrupted by a service restart and did NOT
+land (head stayed `30731160`) — verified before retrying; `/tmp` was
+cleared by the restart, so the manifest had to be recreated. The
+Shopify CLI had vanished from `/usr/bin` again — reinstalled with
+`npm install -g @shopify/cli` (5.0.2). RE-CHECK (browser, pilot preview, judge by PIXELS at
 zoom, not text reading): Caffeine Free hero button — in Subscribe mode
 the comma must sit tight against the "Save 20%" pill with no green
 strip, then "Free Shipping"; toggle to One-time, same for "Save 15%".
