@@ -246,9 +246,25 @@ TESTS: jsdom repro proves both the normal source AND a source with a
 space before the comma now render "Save 20%, Free Shipping" with no
 space before the comma, and the key starts with `v16|`.
 
-DEPLOY: TBD — extension biome-discount-display-16, released with
-`shopify app deploy --allow-updates`. CDN byte-check + pilot preview
-curl verification to be recorded here after deploy.
+DEPLOY: extension biome-discount-display-16
+(https://dev.shopify.com/dashboard/140278598/apps/449145503745/versions/1248129482753),
+released with `shopify app deploy --allow-updates` (non-interactive).
+GitHub main `e0f34d8d` (v16 code + tests + this section; push via
+GitHub MCP push_files, provenance-checked against the snapshot record
+— remote v15 files diffed against local first, diff was exactly the
+v16 changes, no divergence; branch head matched the recorded SHA
+`5b9248c5a`). Vercel /health not re-checked (app code unchanged — the
+deploy is extension-only). CDN byte-check PASSED on the first fetch:
+pilot preview product page loads
+.../biome-discount-display-16/assets/discount-price.js (55,949 bytes),
+SHA-256 identical to local (64dbb3ba…); markers
+paintSubscribeRowColors ×3, data-dd-sub-color ×1,
+data-dd-sub-compare ×1, v16| ×1, dd-static-price ×3,
+appstle_subscription_widget0 ×2, setProperty ×1. Caffeine Free pilot
+preview also loads v16, and its served hero label is `Try the 3pm
+Swap — $59.97, Free Shipping` (comma directly after the price, no
+space before it in the source — the theme source is clean, so the v16
+whitespace consumption is belt-and-braces).
 Parent runs it next: product-page Subscribe row $47.98 BLACK + $59.97
 struck grayish with a gap, values/badge unchanged, first load +
 reload, both modes; CF hero "Save 20%, Free Shipping" with no space
