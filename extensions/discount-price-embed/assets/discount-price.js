@@ -55,24 +55,51 @@
     if (el.textContent !== css) el.textContent = css;
   }
 
-  // Appstle's subscribe badge (span.appstle_sellingPlan_discountText, the
-  // "Save 20%" pill on the Subscribe option) is styled by Appstle's own
-  // widget CSS — currently a pale green (#78F39D) set with !important in
-  // the widget's custom CSS. Restyle it to this app's badge colours so the
-  // product page's two badges match. Only colours + corner radius are
-  // changed; position, size and layout are left to Appstle, and the badge
-  // text, prices and widget behaviour are never touched.
-  // A stylesheet rule (specificity beats Appstle's) makes the restyle
-  // survive Appstle re-rendering the badge; an inline style (below) is
-  // applied on every run as well, so it takes effect immediately.
+  // Appstle's subscribe badges are styled by Appstle's own widget CSS —
+  // currently pale green — and must be restyled to this app's badge colours
+  // so the product page's badges match. There are two different badges,
+  // and the v2 override missed both because it targeted only
+  // span.appstle_sellingPlan_discountText, a class that exists in
+  // Appstle's Mustache template but is never rendered by the live widget
+  // (the live JS has zero references to it):
+  //  (a) the MAIN-PRICE badge in Subscribe mode:
+  //      <span class="appstle_subscription_element appstle_subscription_save">
+  //      rendered by Appstle's JS when it rewrites the theme price. Its CSS
+  //      is `.appstle_subscription_save { color: #78f39d !important; }`
+  //      plus `border: 1px solid currentColor` — pale green text on white
+  //      with a pale green border. (Verified in Appstle's JS/CSS.)
+  //  (b) the ROW pill on the Subscribe option:
+  //      <span class="appstle-save-badge">, styled via CSS variables
+  //      (--as-badge-bg) and Appstle's merchant custom CSS
+  //      `span.appstle-save-badge { background-color: #78F39D !important; }`.
+  //      (Verified in Appstle's JS/CSS and the live page HTML.)
+  // Both are restyled here. Only colours + corner radius are changed;
+  // position, size and layout are left to Appstle, and the badge text,
+  // prices and widget behaviour are never touched.
+  // The inline style (setProperty with "important") beats any stylesheet,
+  // including Appstle's ID-based rules, and is re-applied on every run
+  // (the MutationObserver below re-invokes run() whenever Appstle
+  // re-renders the badge). A stylesheet rule is injected as well so the
+  // restyle is present from the first paint.
+  // NOTE on border-color: .appstle_subscription_save has
+  // `border: 1px solid currentColor`, so once its text colour is set to
+  // white the border would render as a white outline around the dark
+  // pill. Setting border-color to the badge background blends that 1px
+  // border into the pill (a colour-only change; the border itself, and
+  // the element's layout, are untouched).
+  var APPSTLE_BADGE_SELECTOR =
+    "span.appstle_subscription_save, span.appstle-save-badge, span.appstle_sellingPlan_discountText";
   function injectAppstleBadgeCss() {
     if (!S.badgeEnabled) return;
     var el = document.getElementById("dd-appstle-badge");
     var css =
-      "body span.appstle_sellingPlan_discountText{background-color:" +
+      APPSTLE_BADGE_SELECTOR +
+      "{background-color:" +
       badgeBg +
       " !important;color:" +
       badgeColor +
+      " !important;border-color:" +
+      badgeBg +
       " !important;border-radius:" +
       badgeRadius +
       " !important;}";
@@ -86,13 +113,12 @@
 
   function restyleAppstleBadge() {
     if (!S.badgeEnabled) return;
-    document
-      .querySelectorAll("span.appstle_sellingPlan_discountText")
-      .forEach(function (el) {
-        el.style.setProperty("background-color", badgeBg, "important");
-        el.style.setProperty("color", badgeColor, "important");
-        el.style.setProperty("border-radius", badgeRadius, "important");
-      });
+    document.querySelectorAll(APPSTLE_BADGE_SELECTOR).forEach(function (el) {
+      el.style.setProperty("background-color", badgeBg, "important");
+      el.style.setProperty("color", badgeColor, "important");
+      el.style.setProperty("border-color", badgeBg, "important");
+      el.style.setProperty("border-radius", badgeRadius, "important");
+    });
   }
 
   function selectorList(selectors, legacySelector) {
