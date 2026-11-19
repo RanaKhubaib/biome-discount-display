@@ -212,7 +212,22 @@ DEPLOY:
   the script now appends .price-line .now itself, see push 2.)
 - Push 2: script-side landing migration (old saved landing list gets
   .price-line .now without a settings save) + smoke test for it.
-  Deploy pending — expected version biome-discount-display-8.
+  GitHub commit f3645b7a9467c49efd7348505752c3086f599140 (main).
+  Deployed via `shopify app deploy`: extension version
+  biome-discount-display-8,
+  https://dev.shopify.com/dashboard/140278598/apps/449145503745/versions/1247820611585
+  . CDN-verified: pilot preview loads
+  https://cdn.shopify.com/extensions/01a1f1fa-9e3d-7cec-9e9f-d92a43a1dc6d/biome-discount-display-8/assets/discount-price.js
+  (32,236 bytes), SHA-256 identical to the local file; all new markers
+  present (applyStaticText, slotCfg, appstle_onetime_amount, price-line),
+  all Appstle-restyle markers gone. (Note: the CDN instance id in the
+  URL changes per version — the -7 URL's id does NOT work for -8; read
+  the script URL from the rendered pilot page HTML, don't guess it.
+  The pilot page HTML is cached briefly after a deploy; the -8 URL
+  appeared ~2 min after the deploy. The preview fetch needs a cookie
+  jar: `curl -c cookies.txt -b cookies.txt ...?preview_theme_id=...`,
+  otherwise Shopify strips the param and serves the live theme.)
+  Vercel /health 200 ok after the GitHub push (auto-redeploy).
 - Live browser verification still needed (parent): product page
   one-time row ($50.97 + struck $59.97 + Save 15% badge, same size as
   Appstle's Subscribe badge), Subscribe row untouched, all 8 landing
