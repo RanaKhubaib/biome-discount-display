@@ -1641,3 +1641,136 @@ test("v15 static text: expanded price is one group and a following comma stays a
     dom.window.close();
   }
 });
+
+test("v16 subscribe row: inline !important colours beat Appstle's layered stylesheet, values untouched", async () => {
+  // v16 root cause (verified against the live pilot product page):
+  // Appstle's colour rule lives inside `@layer appstle-design`, and
+  // for !important declarations a layered rule beats an unlayered one
+  // regardless of specificity (MDN `!important`) — specificity is only
+  // evaluated after the layer is chosen. So the v13 (0,2,0), v14
+  // (0,2,0) and v15 (1,2,0) stylesheet rules could never win on the
+  // product page, even though the style element WAS injected, the rules
+  // were correct, the selector matched the live span, and the live
+  // settings had saleColor #000000 — the row still rendered #FF0303
+  // (Appstle's --as-price-color). The mechanism that wins is an inline
+  // !important style: MDN confirms inline !important takes precedence
+  // over all other !important author styles, no matter the layer.
+  // jsdom normalises hex colours to rgb() when read back.
+  const dom = runPage(
+    PRODUCT_HTML_WIDGET_TYPE_2,
+    `https://biometheory.shop/products/${HANDLE}`,
+    baseSettings(),
+    basePrices(),
+  );
+  try {
+    const doc = dom.window.document;
+    const sale = doc.querySelector(
+      ".appstle_subscription_amount_wrapper .appstle_subscription_amount",
+    );
+    const compare = doc.querySelector(
+      ".appstle_subscription_amount_wrapper .appstle_subscription_compare_amount",
+    );
+    // Painted black / grayish, inline !important.
+    assert.ok(["#000000", "rgb(0, 0, 0)"].includes(sale.style.getPropertyValue("color")));
+    assert.equal(sale.style.getPropertyPriority("color"), "important");
+    assert.ok(["#6b7280", "rgb(107, 114, 128)"].includes(compare.style.getPropertyValue("color")));
+    assert.equal(compare.style.getPropertyPriority("color"), "important");
+    // Guard attributes set (and re-paint if the settings colour changes).
+    assert.equal(sale.getAttribute("data-dd-sub-color"), "#000000");
+    assert.equal(compare.getAttribute("data-dd-sub-compare"), "#6b7280");
+    // Values untouched, no app markup inside the spans.
+    assert.equal(sale.textContent, "$47.98");
+    assert.equal(sale.querySelector(".dd-sale"), null);
+    assert.equal(compare.textContent, "$59.97");
+    // The one-time row is never painted by this painter — its spans
+    // live in .appstle_one_time_price_wrapper, a different wrapper.
+    const oneTime = doc.querySelector(
+      ".appstle_one_time_price_wrapper .appstle_subscription_amount",
+    );
+    assert.equal(oneTime.getAttribute("data-dd-sub-color"), null);
+    assert.equal(oneTime.getAttribute("data-dd-sub-compare"), null);
+    // Stylesheet fallback still injected (wins wherever Appstle's rule
+    // is unlayered or absent).
+    assert.ok(doc.getElementById("dd-subscribe-price-colors"));
+    // Appstle re-renders the widget: the new spans are repainted by
+    // the MutationObserver + retry timers (run() repaints every run).
+    const wrap = doc.querySelector(".appstle_subscription_amount_wrapper");
+    wrap.innerHTML =
+      '<span class="appstle_subscription_amount transcy-money" aria-hidden="true">$47.98</span>' +
+      '<span class="appstle_subscription_compare_amount transcy-money" aria-hidden="true">$59.97</span>';
+    await sleep(400);
+    const sale2 = doc.querySelector(
+      ".appstle_subscription_amount_wrapper .appstle_subscription_amount",
+    );
+    const compare2 = doc.querySelector(
+      ".appstle_subscription_amount_wrapper .appstle_subscription_compare_amount",
+    );
+    assert.ok(["#000000", "rgb(0, 0, 0)"].includes(sale2.style.getPropertyValue("color")));
+    assert.equal(sale2.style.getPropertyPriority("color"), "important");
+    assert.ok(["#6b7280", "rgb(107, 114, 128)"].includes(compare2.style.getPropertyValue("color")));
+    assert.equal(compare2.style.getPropertyPriority("color"), "important");
+  } finally {
+    dom.window.close();
+  }
+});
+
+test("v16 static text: a space before a following comma is removed, and the key is versioned", async () => {
+  // The live Caffeine Free hero kept rendering "Save 20% , Free
+  // Shipping" even though v15's wrapper is correct for a source with
+  // the comma directly after the price (jsdom repro proves it). Two
+  // robustness gaps remain: (1) a source with whitespace before the
+  // comma ("$59.97 , Free Shipping") was not consumed, so the space
+  // survived in front of the comma; (2) the static-text key was not
+  // versioned, so an element rewritten by an older app version (e.g.
+  // in a retained / back-forward cached page) kept its stale markup.
+  // Both are fixed here.
+  const html = `
+  <div class="shopify-section"><section class="bb gutter" id="buy">
+    <div class="cta-wrap">
+      <a class="btn" href="#buy" id="heroCta">Try the 3pm Swap — $59.97 , Free Shipping</a>
+    </div>
+    <div class="price-line" aria-label="Price: $59.97, was $78.93">
+      <span class="now">$59.97</span><s class="was"></s>
+    </div>
+    <input type="radio" name="cf-purchase" value="onetime">
+    <input type="radio" name="cf-purchase" value="subscribe" checked>
+  </section></div>`;
+  const dom = runPage(
+    html,
+    "https://biometheory.shop/pages/biome-caffeine-free",
+    baseSettings(),
+    basePrices(),
+    (window) => {
+      window.document.body.dataset.flavor = "mango";
+      window.CF_PRODUCTS = { mango: { variant: VARIANT } };
+    },
+  );
+  try {
+    const doc = dom.window.document;
+    const hero = doc.querySelector("#heroCta");
+    // The space before the comma is gone, in both modes.
+    assert.match(hero.textContent, /Save 20%, Free Shipping/);
+    assert.doesNotMatch(hero.textContent, /Save 20% ,/);
+    // The key is versioned, so a stale older-version rewrite is
+    // re-derived instead of kept.
+    assert.match(
+      hero.getAttribute("data-dd-static-key") || "",
+      /^v16\|/,
+    );
+    // Toggle to One-time: comma still attached, key still versioned.
+    doc.querySelector('input[name="cf-purchase"][value="onetime"]').checked =
+      true;
+    doc.querySelector('input[name="cf-purchase"][value="subscribe"]').checked =
+      false;
+    doc.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+    await sleep(150);
+    assert.match(hero.textContent, /Save 15%, Free Shipping/);
+    assert.doesNotMatch(hero.textContent, /Save 15% ,/);
+    assert.match(
+      hero.getAttribute("data-dd-static-key") || "",
+      /^v16\|/,
+    );
+  } finally {
+    dom.window.close();
+  }
+});

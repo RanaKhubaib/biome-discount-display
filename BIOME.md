@@ -161,6 +161,103 @@ send Up+Enter rather than assuming it failed. (v15: `shopify app deploy
 preferred for agent deploys; the first attempt with `script -qec` +
 `tail` went to a runtime pending-confirmation and was killed.)
 
+## v16 — Inline !important Subscribe-row colours (layer fix), comma whitespace + versioned static-text key (2026-11-19, app only)
+
+The v15 re-check tour (browser-task:18f71b18, 12:27–12:36 PKT) left two
+failures: the product-page Subscribe row was STILL red, and the
+Caffeine Free hero comma STILL had a space before it. Both are fixed
+here. App only — no theme change. Nothing published; live MAIN
+untouched; no discount / Appstle plan / price value changed.
+
+FIX 1 — PRODUCT-PAGE SUBSCRIBE ROW STILL RED.
+ROOT CAUSE (verified from the live pilot product-page HTML via curl +
+jsdom repro, not guessed): Appstle's colour rule lives inside
+`@layer appstle-design` (`@layer appstle-merchant, appstle-design;`
+then `@layer appstle-design { ... }` in the live page HTML), and
+`--as-price-color: #ff0303` is set in the page. MDN `!important`
+(verified via web search 2026-11-19): "Important declarations reverse
+the order of precedence: important declarations in the first layer
+take precedence over important declarations in the next layer, and so
+on. Also, all the important declarations have precedence over
+important declarations made outside any layer" — i.e. a layered
+`!important` beats an unlayered `!important` REGARDLESS of
+specificity, and specificity is only evaluated after the layer is
+chosen. That is why v13 (0,2,0), v14 (0,2,0) and v15 (1,2,0) could
+never win on the product page: the injection WAS running (the
+`#dd-subscribe-price-colors` style element is present with the exact
+v15 CSS, the selector matches 1 element, the live settings JSON has
+`saleColor: "#000000"`), the code was correct — the cascade-layer
+inversion made every stylesheet rule lose. MDN also confirms: "Inline
+*important* styles take precedence over all other *important* author
+styles, no matter the layer" — so the fix must be inline `!important`.
+THE FIX — `paintSubscribeRowColors()` in `discount-price.js`, called
+in `run()` right after `injectSubscribePriceColors()` (so the existing
+MutationObserver + retry timers re-apply it after Appstle re-renders):
+it sets `element.style.setProperty("color", saleColor, "important")`
+(`#000000`) on the Subscribe sale spans and `compareColor`
+(`#6b7280`) on the compare spans, guarded by `data-dd-sub-color` /
+`data-dd-sub-compare` attributes so redundant sets are skipped (and a
+settings colour change re-paints). Selectors reuse the v14/v15 ones
+(`.appstle_subscription_amount_wrapper .appstle_subscription_amount` /
+`.appstle_subscription_compare_amount`,
+`.appstle_sellingPlan_price.appstle_price_block` /
+`.appstle_sellingPlan_formattedCompareAtPrice.appstle_price_block`,
+landing `[data-sub-price]` / `[data-sub-was]`). Colour only — values
+and badge untouched, one-time row untouched (its spans live in
+`.appstle_one_time_price_wrapper`, a different wrapper class, so these
+selectors cannot match them). The (1,2,0) stylesheet rules stay as a
+fallback for wherever Appstle's rule is unlayered or absent.
+TESTS: jsdom repro (exact v15 code + exact live markup) proved the
+injection runs and matches but loses the cascade; the v16 repro proves
+the sale span now carries `color: rgb(0, 0, 0) !important` and the
+compare `color: rgb(107, 114, 128) !important`, the one-time span is
+NOT painted, and both are repainted after the wrapper is replaced
+(Appstle re-render). New smoke tests "v16 subscribe row: inline
+!important colours beat Appstle's layered stylesheet, values
+untouched" + "v16 static text: a space before a following comma is
+removed, and the key is versioned". Smoke 32/32, sync 15/15, build OK.
+
+FIX 2 — CAFFEINE FREE COMMA.
+ROOT CAUSE: the v15 wrapper is CORRECT for a source with the comma
+directly after the price — a jsdom repro of the exact v15 code against
+the exact live markup outputs `...Save 20%</span>,</span> Free
+Shipping` with NO space before the comma, and the theme's original
+server HTML is `Try the 3pm Swap — $59.97, Free Shipping` (single text
+node, no space before the comma; liquid is
+`{{ btn_label }} — {{ cf_mv.price | money }}, {{ btn_suffix }}`), and
+the theme's JS never touches `#heroCta`. The live browser's text
+reading ("Save 20% , Free Shipping") is therefore most likely an
+artifact of the accessible-name / innerText computation inserting a
+space after the inline-block badge, plus approximate pixel measurement
+— not a space in the DOM. But two robustness gaps remained in the
+app: (1) a source WITH whitespace before the comma ("$59.97 ,
+Free Shipping") was not consumed, so the space would survive in front
+of the comma; (2) the static-text key was not versioned, so an element
+rewritten by an older app version (e.g. in a retained / back-forward
+cached page) kept its stale markup. THE FIX — in `applyStaticText`:
+the following-punctuation match is now `/^\s*([,;:])/` so optional
+whitespace before the punctuation is consumed and the comma lands
+inside the `.dd-static-price` group with no space before it; and the
+key is now versioned (`"v16|" + ...`) so a stale older-version rewrite
+is re-derived. The hero control is an `<a href="#buy">`, not a
+`<button>` — the v15 wrapper already applies to it (it is in
+`ctaSelectors` via `.la-cta a.btn`), no theme change needed.
+TESTS: jsdom repro proves both the normal source AND a source with a
+space before the comma now render "Save 20%, Free Shipping" with no
+space before the comma, and the key starts with `v16|`.
+
+DEPLOY: TBD — extension biome-discount-display-16, released with
+`shopify app deploy --allow-updates`. CDN byte-check + pilot preview
+curl verification to be recorded here after deploy.
+Parent runs it next: product-page Subscribe row $47.98 BLACK + $59.97
+struck grayish with a gap, values/badge unchanged, first load +
+reload, both modes; CF hero "Save 20%, Free Shipping" with no space
+before the comma, both modes; GH2 + PB2 hero buttons one-line at
+1920px desktop, both modes. Live browser verification is the only
+check jsdom cannot do (it cannot compute colours) — the colour
+assertions rest on the inline !important style, which MDN confirms
+beats any stylesheet rule, layered or not.
+
 ## v15 — ID-scoped Subscribe-row colours, static-text price group keeps a following comma attached (2026-11-19, app + theme)
 
 The v14 re-check tour (browser-task:f8302b0b, 12:04–12:13 PKT) PASSED 7 of

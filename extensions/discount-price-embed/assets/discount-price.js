@@ -166,6 +166,29 @@
   // If Appstle ever renames these classes, the rules silently stop
   // matching and the row falls back to Appstle's own colours — it can
   // never break a price value.
+  //
+  // WHY THE STYLESHEET ALONE CANNOT WIN (v16, verified): Appstle's own
+  // colour rule lives inside `@layer appstle-design` (seen in the live
+  // pilot product-page HTML: `@layer appstle-merchant, appstle-design;`
+  // then `@layer appstle-design { :is(...) .appstle_subscription_amount
+  // { color: var(--as-price-color, ...) !important; } }`, with
+  // --as-price-color: #ff0303). For !important declarations the layer
+  // order is REVERSED: layered !important beats unlayered !important
+  // regardless of specificity (MDN `!important`), and specificity is
+  // only evaluated after the layer is chosen. So the v13 (0,2,0), v14
+  // (0,2,0) and v15 (1,2,0) rules could never win on the product page
+  // — verified live: the #dd-subscribe-price-colors style element IS
+  // injected, its rules ARE present and correct, the v15 selector DOES
+  // match the live span (jsdom repro), the live settings have
+  // saleColor #000000, and the row still renders #FF0303. The landings
+  // passed because the theme's red rule there is unlayered (and the
+  // one-time row is rewritten with inline colours, so Appstle's rule
+  // never matches it). The mechanism that DOES win is an inline
+  // !important style: MDN confirms inline !important styles take
+  // precedence over all other !important author styles, no matter the
+  // layer. That is what paintSubscribeRowColors() below does; these
+  // stylesheet rules stay as a fallback (they win wherever Appstle's
+  // rule is unlayered or absent, e.g. the landing replicas).
   function injectSubscribePriceColors() {
     // Same :is() scoping Appstle's own stylesheet uses, so these rules
     // match every widget instance (widget0, widget1, ...) on the page.
@@ -213,6 +236,41 @@
       document.head.appendChild(el);
     }
     if (el.textContent !== css) el.textContent = css;
+  }
+
+  // Direct inline colours for the Subscribe row (v16) — the mechanism
+  // that actually wins over Appstle's layered !important rule (see the
+  // layer note above injectSubscribePriceColors). Colour only: no value,
+  // badge or layout change, and the one-time row is never touched (its
+  // spans live in .appstle_one_time_price_wrapper, a different wrapper
+  // class, so these selectors cannot match them; the Mustache one-time
+  // spans never carry .appstle_price_block). Re-applied on every run()
+  // — the MutationObserver + retry timers already call run() — so an
+  // Appstle re-render is repainted. A data attribute guards against
+  // redundant sets (and re-paints if the settings colour changes).
+  var SUB_SALE_SELECTORS = [
+    ".appstle_subscription_amount_wrapper .appstle_subscription_amount",
+    ".appstle_sellingPlan_price.appstle_price_block",
+    '.purchase-opt[data-purchase-opt="subscribe"] .purchase-price [data-sub-price]',
+  ];
+  var SUB_COMPARE_SELECTORS = [
+    ".appstle_subscription_amount_wrapper .appstle_subscription_compare_amount",
+    ".appstle_sellingPlan_formattedCompareAtPrice.appstle_price_block",
+    '.purchase-opt[data-purchase-opt="subscribe"] .purchase-price [data-sub-was]',
+  ];
+  function paintSubscribeSpan(el, color, guardAttr) {
+    if (!el) return;
+    if (el.getAttribute(guardAttr) === color) return;
+    el.style.setProperty("color", color, "important");
+    el.setAttribute(guardAttr, color);
+  }
+  function paintSubscribeRowColors() {
+    qsa(document, SUB_SALE_SELECTORS.join(",")).forEach(function (el) {
+      paintSubscribeSpan(el, saleColor, "data-dd-sub-color");
+    });
+    qsa(document, SUB_COMPARE_SELECTORS.join(",")).forEach(function (el) {
+      paintSubscribeSpan(el, compareColor, "data-dd-sub-compare");
+    });
   }
 
   // querySelectorAll with a merchant-controlled selector list. A single
@@ -499,7 +557,12 @@
     // toggles One-time <-> Subscribe the key changes, so the element is
     // restored to its original text and re-derived from the new mode
     // instead of the key guard returning early with the stale price.
+    // The key is versioned (v16): the markup format changed in v15
+    // (the .dd-static-price wrapper + comma handling), so an element
+    // rewritten by an older version — e.g. in a retained / back-forward
+    // cached page — is re-derived instead of keeping stale markup.
     var key =
+      "v16|" +
       (mode || "") +
       "|" +
       lp.o +
@@ -563,14 +626,22 @@
         // the wrapper; the rest of the trailing text stays outside.
         var afterToken = text.slice(m.index + m[0].length);
         var punct = "";
-        var punctMatch = afterToken.match(/^([,;:])/);
-        if (punctMatch) punct = punctMatch[1];
+        var punctLen = 0;
+        // A following comma (", Free Shipping") stays attached to the
+        // badge inside the wrapper. Consume optional whitespace before
+        // it too (v16): a source like "$59.97 , Free Shipping" would
+        // otherwise leave a space in front of the comma.
+        var punctMatch = afterToken.match(/^\s*([,;:])/);
+        if (punctMatch) {
+          punct = punctMatch[1];
+          punctLen = punctMatch[0].length;
+        }
         html +=
           '<span class="dd-static-price">' +
           priceInnerHtml(lp.o, target.sale, cfg) +
           escapeHtml(punct) +
           "</span>";
-        last = m.index + m[0].length + punct.length;
+        last = m.index + m[0].length + punctLen;
         nodeChanged = true;
       }
       if (!nodeChanged) return;
@@ -1156,6 +1227,7 @@
   function run() {
     injectCustomCss();
     injectSubscribePriceColors();
+    paintSubscribeRowColors();
     updateLandingBadges();
 
     // Elements a specific slot already rewrote this run — the global
