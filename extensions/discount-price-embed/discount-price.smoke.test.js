@@ -1774,3 +1774,87 @@ test("v16 static text: a space before a following comma is removed, and the key 
     dom.window.close();
   }
 });
+
+test("v17 static text: badge carries margin-right:0 and the comma is the very next node after it (Caffeine Free hero)", async () => {
+  // v17 root cause (verified from code + served HTML, not guessed):
+  // the badge has NO margin-right anywhere — not in its inline style,
+  // not in the liquid .dd-badge rule, not in the theme CSS, not in the
+  // external stylesheets — and the jsdom DOM is clean (comma directly
+  // after the badge, no whitespace). The v16 re-check still measured an
+  // 8–10px strip of green button background between the pill and the
+  // comma in the live browser, so the gap is a layout effect at the
+  // inline/flex boundary, not a space or a margin in the markup. The
+  // fix makes the .dd-static-price group an inline-flex container with
+  // gap:0, so the badge and the comma are flex items with exactly 0 gap
+  // between them by spec — and states the badge's margin-right:0 inline
+  // so no stylesheet can ever put a margin after it. align-items:
+  // baseline keeps the current baseline alignment.
+  const html = `
+  <div class="shopify-section"><section class="bb gutter" id="buy">
+    <div class="cta-wrap">
+      <a class="btn" href="#buy" id="heroCta">Try the 3pm Swap — $59.97, Free Shipping</a>
+    </div>
+    <div class="price-line" aria-label="Price: $59.97, was $78.93">
+      <span class="now">$59.97</span><s class="was"></s>
+    </div>
+    <input type="radio" name="cf-purchase" value="onetime">
+    <input type="radio" name="cf-purchase" value="subscribe" checked>
+  </section></div>`;
+  const dom = runPage(
+    html,
+    "https://biometheory.shop/pages/biome-caffeine-free",
+    baseSettings(),
+    basePrices(),
+    (window) => {
+      window.document.body.dataset.flavor = "mango";
+      window.CF_PRODUCTS = { mango: { variant: VARIANT } };
+    },
+  );
+  try {
+    const doc = dom.window.document;
+    const hero = doc.querySelector("#heroCta");
+    const assertTight = (pct) => {
+      const group = hero.querySelector(".dd-static-price");
+      assert.ok(group, "expected a .dd-static-price group");
+      const badge = group.querySelector(".dd-badge");
+      assert.ok(badge, "expected a badge in the group");
+      // The badge states margin-right:0 inline — no stylesheet can put
+      // a margin after it.
+      assert.match(
+        badge.getAttribute("style") || "",
+        /margin-right:\s*0/,
+        "badge must carry margin-right:0 inline",
+      );
+      // The very next sibling node after the badge is the "," text node
+      // — no whitespace node, no element, nothing between pill and comma.
+      const kids = [...group.childNodes];
+      const badgeIdx = kids.indexOf(badge);
+      assert.ok(badgeIdx >= 0, "badge must be a direct child of the group");
+      const next = kids[badgeIdx + 1];
+      assert.ok(next, "expected a node right after the badge");
+      assert.equal(next.nodeType, 3, "node after the badge must be text");
+      assert.equal(next.nodeValue, ",", "text after the badge must be exactly ','");
+      assert.match(hero.textContent, new RegExp(`Save ${pct}%, Free Shipping`));
+      assert.doesNotMatch(hero.textContent, new RegExp(`Save ${pct}% ,`));
+    };
+    // Subscribe selected on load.
+    assertTight(20);
+    // Toggle to One-time: comma still tight.
+    doc.querySelector('input[name="cf-purchase"][value="onetime"]').checked =
+      true;
+    doc.querySelector('input[name="cf-purchase"][value="subscribe"]').checked =
+      false;
+    doc.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+    await sleep(150);
+    assertTight(15);
+  } finally {
+    dom.window.close();
+  }
+  // The liquid rule itself: inline-flex, baseline alignment, zero gap.
+  const liquid = readFileSync(join(dir, "blocks", "discount-price.liquid"), "utf8");
+  assert.match(
+    liquid,
+    /\.dd-static-price\s*\{\s*display:\s*inline-flex;\s*align-items:\s*baseline;\s*gap:\s*0;/,
+    "liquid .dd-static-price must be inline-flex with gap:0",
+  );
+});

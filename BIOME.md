@@ -161,6 +161,75 @@ send Up+Enter rather than assuming it failed. (v15: `shopify app deploy
 preferred for agent deploys; the first attempt with `script -qec` +
 `tail` went to a runtime pending-confirmation and was killed.)
 
+## v17 — Caffeine Free hero comma: `.dd-static-price` is inline-flex gap:0, badge margin-right:0 (2026-11-19, app only)
+
+The v16 re-check tour (browser-task:3e4e6e00, 13:04–13:09 PKT) passed
+everything except the comma: the product-page Subscribe row is now
+BLACK, GH2/PB2 hero buttons are one line, all 8 landings are clean.
+Only the Caffeine Free hero button still renders "Save 20% , Free
+Shipping" — judged by RENDERED PIXELS at 4x zoom, a dark comma sits
+outside the dark pill with ~8–10 source px of green button background
+between the pill's right edge and the comma. App only — no theme
+change. Nothing published; live MAIN untouched; no discount / Appstle
+plan / price value changed.
+
+ROOT CAUSE (verified from code + served HTML, NOT the first
+hypothesis): the parent's hypothesis was wrong — the badge has NO
+margin-right anywhere. Not in its inline style (background + colour
+only), not in the liquid `.dd-badge` rule, not in the theme CSS, not in
+the external stylesheets (`base.css`, compiled `styles.css`, Appstle
+CSS is scoped to its widget). The served CF hero HTML is one text
+node, comma directly after `$59.97`. A jsdom repro with the correct
+`window.DiscountDisplay` setup proves the live DOM is clean in BOTH
+modes: `...<span class="dd-badge ...">Save 20%</span>,</span> Free
+Shipping` — the comma is inside `.dd-static-price`, the very next node
+after the badge, no whitespace, no margin. Yet the live browser still
+shows the gap. So the gap is a LAYOUT effect at the inline/flex
+boundary, not a space or a margin in the markup: the hero link is a
+flex button (`display:inline-flex; gap:10px`) and the group was a plain
+inline span, so the browser's inline layout can open a strip between
+the pill and the comma. (The two browser measurements disagree — 3–4px
+in the v15 diagnostic, 8–10px in the v16 re-check — which is itself
+consistent with a layout quirk rather than a fixed margin.)
+
+FIX (two parts, both in the app):
+1. Liquid `blocks/discount-price.liquid`: `.dd-static-price` is now
+   `display: inline-flex; align-items: baseline; gap: 0;` (was
+   `display: inline`). The badge and the comma are now flex items
+   with EXACTLY 0 gap between them by spec — no inline-layout quirk
+   can open a strip. `align-items: baseline` keeps the current
+   baseline alignment (the badge's `vertical-align` is ignored in
+   flex, so no vertical change). The 6px inline margins on
+   `.dd-sale`/`.dd-orig` are preserved as flex-item margins, so the
+   price gaps ($47.98 to $59.97, $59.97 to badge) are unchanged.
+2. `assets/discount-price.js` `badgeHtml()`: the badge's inline style
+   now ends `;margin-right:0` (defensive — no stylesheet can ever put
+   a margin after the badge; the liquid `.dd-wrap` last-child rule
+   does not apply inside `.dd-static-price`). The comma is NOT put
+   inside the badge pill — it stays dark text on the green button, as
+   intended.
+Tests: new smoke test "v17 static text: badge carries margin-right:0
+and the comma is the very next node after it" — asserts the badge
+inline style contains `margin-right:0`, the node right after the badge
+is exactly the `","` text node, and the liquid rule is inline-flex
+gap:0, in BOTH modes (Subscribe `$47.98` / Save 20% and One-time
+`$50.97` / Save 15%). jsdom repro (both modes) confirms the same.
+`node --check` OK, smoke 33/33, sync 15/15, build OK. Deployed:
+extension biome-discount-display-17 (version page TBD). CDN byte-check:
+pilot preview loads `.../biome-discount-display-17/assets/discount-price.js`,
+SHA-256 identical to local, `v16|` + `margin-right:0` + inline-flex
+markers present. RE-CHECK (browser, pilot preview, judge by PIXELS at
+zoom, not text reading): Caffeine Free hero button — in Subscribe mode
+the comma must sit tight against the "Save 20%" pill with no green
+strip, then "Free Shipping"; toggle to One-time, same for "Save 15%".
+Regression: product-page Subscribe row still black; GH2/PB2 hero
+buttons still one line; no $78.93. RISK: this fix is verified in jsdom
+only — the gap is a live-layout effect, so only the browser re-check
+can prove it closed. If it still shows a gap, the next step is a
+DevTools session on the live page (element inspection was unavailable
+to the browser task) to read the computed layout of the badge and the
+comma node directly.
+
 ## v16 — Inline !important Subscribe-row colours (layer fix), comma whitespace + versioned static-text key (2026-11-19, app only)
 
 The v15 re-check tour (browser-task:18f71b18, 12:27–12:36 PKT) left two

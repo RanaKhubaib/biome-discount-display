@@ -23,8 +23,15 @@
     /* Static-text price group (CTA / hero buttons): one inline span so
        a flex button's gap cannot split the price parts, and a following
        comma stays attached to the badge (see applyStaticText). The price
-       never wraps inside the group; the button label outside it still can. */
-    .dd-static-price { display: inline; white-space: nowrap; }
+       never wraps inside the group; the button label outside it still can.
+       v17: inline-flex with gap:0 (not plain inline) — the badge and a
+       following comma are flex items with exactly 0 gap between them, so
+       no inline-layout quirk can open a visible strip between the pill
+       and the comma. align-items:baseline keeps the current baseline
+       alignment (the badge's vertical-align is ignored in flex). The
+       6px inline margins on .dd-sale/.dd-orig are preserved as flex
+       item margins, so the price gaps are unchanged. */
+    .dd-static-price { display: inline-flex; align-items: baseline; gap: 0; white-space: nowrap; }
   </style>
   <script>
     window.DiscountDisplay = {

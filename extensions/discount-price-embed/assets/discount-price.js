@@ -419,7 +419,12 @@
       cfg.badgeBg +
       ";color:" +
       cfg.badgeColor +
-      '">Save ' +
+      // v17: explicit margin-right:0 — the badge is the last price part,
+      // so nothing may ever sit between it and a following comma
+      // (", Free Shipping"). The liquid .dd-wrap rule already zeroes the
+      // last child's margin, but the badge is also rendered inside
+      // .dd-static-price (no such rule), so state it inline.
+      ';margin-right:0">Save ' +
       pct +
       "%</span>"
     );
