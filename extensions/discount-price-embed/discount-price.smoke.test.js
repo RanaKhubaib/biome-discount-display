@@ -788,10 +788,11 @@ const PRODUCT_HTML_WIDGET_TYPE_2 = `
             <span class="appstle_circle"><span class="appstle_dot"></span></span>
             <span class="appstle_subscription_text">Subscribe &amp; Save</span>
           </label>
-          <div class="appstle_subscription_price_wrapper">
+          <div class="appstle_subscription_amount_wrapper">
             <span class="appstle_subscription_amount transcy-money" aria-hidden="true">$47.98</span>
             <span class="appstle_subscription_amount-appstle-sr-only transcy-money sr-only">Sale price $47.98</span>
-            <span class="appstle_subscription_amount_compare_at_price transcy-money" aria-hidden="true">$59.97</span>
+            <span class="appstle_subscription_compare_amount transcy-money" aria-hidden="true">$59.97</span>
+            <span class="appstle_subscription_compare_amount-appstle-sr-only transcy-money sr-only">Regular price $59.97</span>
           </div>
         </div>
         <span class="appstle_bundle_discount_amount subscription_discount">SAVE 20%</span>
@@ -845,7 +846,7 @@ test("widget one-time row (WIDGET_TYPE_2) is rewritten like the Subscribe row", 
     );
     // The Subscribe row is Appstle's — price, badge and markup untouched.
     const subPrice = doc.querySelector(
-      ".appstle_subscription_price_wrapper .appstle_subscription_amount",
+      ".appstle_subscription_amount_wrapper .appstle_subscription_amount",
     );
     assert.equal(subPrice.textContent, "$47.98");
     assert.equal(subPrice.querySelector(".dd-sale"), null);
@@ -886,7 +887,7 @@ test("widget one-time row (WIDGET_TYPE_2) survives Appstle re-rendering its text
     );
     // Subscribe row still untouched after the re-render.
     const subPrice = doc.querySelector(
-      ".appstle_subscription_price_wrapper .appstle_subscription_amount",
+      ".appstle_subscription_amount_wrapper .appstle_subscription_amount",
     );
     assert.equal(subPrice.textContent, "$47.98");
     assert.equal(subPrice.querySelector(".dd-sale"), null);
@@ -942,7 +943,7 @@ test("widget one-time row (WIDGET_TYPE_2) shows no app badge when Appstle's bund
     );
     // The Subscribe row is Appstle's — price, badge and markup untouched.
     const subPrice = doc.querySelector(
-      ".appstle_subscription_price_wrapper .appstle_subscription_amount",
+      ".appstle_subscription_amount_wrapper .appstle_subscription_amount",
     );
     assert.equal(subPrice.textContent, "$47.98");
     assert.equal(subPrice.querySelector(".dd-sale"), null);
@@ -992,7 +993,7 @@ test("widget one-time row (WIDGET_TYPE_2) never adds an app badge even when Apps
     );
     // Subscribe row still untouched after the re-render.
     const subPrice = doc.querySelector(
-      ".appstle_subscription_price_wrapper .appstle_subscription_amount",
+      ".appstle_subscription_amount_wrapper .appstle_subscription_amount",
     );
     assert.equal(subPrice.textContent, "$47.98");
     assert.equal(subPrice.querySelector(".dd-sale"), null);
@@ -1152,27 +1153,39 @@ test("v13 subscribe row: colours come from CSS injection, values untouched", () 
     assert.ok(style, "expected the subscribe-price-colours style element");
     assert.match(
       style.textContent,
-      /\.appstle_subscription_price_wrapper \.appstle_subscription_amount\{color:#000000 !important\}/,
+      /\.appstle_subscription_amount_wrapper \.appstle_subscription_amount\{color:#000000 !important\}/,
     );
+    // v14: the subscribe compare span is
+    // .appstle_subscription_compare_amount — the v13 rule named
+    // .appstle_subscription_amount_compare_at_price, which is the
+    // ONE-TIME wrapper's compare class and does not exist in the
+    // subscribe row (that is why the compare never went grayish).
     assert.match(
       style.textContent,
-      /\.appstle_subscription_price_wrapper \.appstle_subscription_amount_compare_at_price\{color:#6b7280 !important\}/,
+      /\.appstle_subscription_amount_wrapper \.appstle_subscription_compare_amount\{color:#6b7280 !important\}/,
+    );
+    // The v13 injection named .appstle_subscription_price_wrapper — a
+    // class that does not exist anywhere in Appstle's JS — so its rules
+    // matched nothing live. It must not come back.
+    assert.doesNotMatch(
+      style.textContent,
+      /appstle_subscription_price_wrapper/,
     );
     // The Subscribe row's VALUES are Appstle's and unchanged — no app
     // markup inside them, and the sr-only text is untouched too.
     const subPrice = doc.querySelector(
-      ".appstle_subscription_price_wrapper .appstle_subscription_amount",
+      ".appstle_subscription_amount_wrapper .appstle_subscription_amount",
     );
     assert.equal(subPrice.textContent, "$47.98");
     assert.equal(subPrice.querySelector(".dd-sale"), null);
     assert.equal(subPrice.querySelector(".dd-orig"), null);
     const subCompare = doc.querySelector(
-      ".appstle_subscription_price_wrapper .appstle_subscription_amount_compare_at_price",
+      ".appstle_subscription_amount_wrapper .appstle_subscription_compare_amount",
     );
     assert.equal(subCompare.textContent, "$59.97");
     assert.equal(
       doc.querySelector(
-        ".appstle_subscription_price_wrapper .appstle_subscription_amount-appstle-sr-only",
+        ".appstle_subscription_amount_wrapper .appstle_subscription_amount-appstle-sr-only",
       ).textContent,
       "Sale price $47.98",
     );
@@ -1234,6 +1247,265 @@ test("v13: an invalid selector in settings degrades that place only, it does not
     assert.equal(buyPrice.querySelector(".dd-wrap"), null);
     const cta = doc.querySelector('.cta-wrap a.btn[href="#buy"]');
     assert.equal(cta.querySelector(".dd-sale").textContent, "$47.98");
+  } finally {
+    dom.window.close();
+  }
+});
+
+// v14 FIX 1 — landing Subscribe row: the theme colours .purchase-price
+// red (#d82c0d) on 7 pages, and the v13 colour injection only targeted
+// Appstle classes that do not exist on landing pages (native replica buy
+// boxes), so the Subscribe row's [data-sub-price] inherited red while
+// the app-rewritten one-time row was black. Enzymes alone looked black
+// because its buy section sets .purchase-price to dark green (#42572A).
+// The injection now also covers the landing Subscribe row, scoped to the
+// subscribe option only. jsdom cannot compute colours, so these tests
+// assert the injected rule text (specificity + !important beats both the
+// red and the dark-green theme rule) and that the row's values and the
+// one-time row are untouched.
+const LANDING_SUBSCRIBE_ROW_HTML = (themeColor) => `
+<style>.purchase-price{display:flex;gap:4px 10px;font-weight:800;font-size:1.25rem;color:${themeColor}}</style>
+<div class="shopify-section"><section class="bb gutter" id="buy">
+  <div class="purchase-opt" data-purchase-opt="onetime" data-selected="false">
+    <input type="radio" name="gf-purchase" value="onetime">
+    <span class="purchase-main">
+      <span class="purchase-title">One-time purchase</span>
+      <span class="purchase-price"><span data-ot-price>$50.97</span><s data-ot-was>$59.97</s><span class="save-badge">Save 15%</span></span>
+    </span>
+  </div>
+  <div class="purchase-opt" data-purchase-opt="subscribe" data-selected="true">
+    <input type="radio" name="gf-purchase" value="subscribe" checked>
+    <span class="purchase-main">
+      <span class="purchase-title">Subscribe &amp; Save <span class="purchase-freq">Every Month</span></span>
+      <span class="purchase-price"><span data-sub-price>$47.98</span><s data-sub-was>$59.97</s><span class="save-badge">Save 20%</span></span>
+      <span class="purchase-note">Renews at <span data-renew-price>$50.97</span> every month</span>
+    </span>
+  </div>
+  <div class="price-line" aria-label="Price: $59.97, was $59.97">
+    <span class="now">$59.97</span><s class="was">$59.97</s>
+  </div>
+</section></div>`;
+
+test("v14 landing Subscribe row is recoloured black/grayish on a red-theme page", () => {
+  const dom = runPage(
+    LANDING_SUBSCRIBE_ROW_HTML("#d82c0d"),
+    "https://biometheory.shop/pages/biome-gut-first",
+    baseSettings(),
+    basePrices(),
+    (window) => {
+      window.document.body.dataset.flavor = "mango";
+      window.GF_PRODUCTS = { mango: { variant: VARIANT } };
+    },
+  );
+  try {
+    const doc = dom.window.document;
+    const style = doc.getElementById("dd-subscribe-price-colors");
+    assert.ok(style, "expected the subscribe-price-colours style element");
+    // Two-class selectors + !important beat the theme's single-class
+    // .purchase-price{color:#d82c0d} rule.
+    assert.match(
+      style.textContent,
+      /\.purchase-opt\[data-purchase-opt="subscribe"\] \.purchase-price \[data-sub-price\]\{color:#000000 !important\}/,
+    );
+    assert.match(
+      style.textContent,
+      /\.purchase-opt\[data-purchase-opt="subscribe"\] \.purchase-price \[data-sub-was\]\{color:#6b7280 !important\}/,
+    );
+    // Values untouched, no app markup in the Subscribe row.
+    const subPrice = doc.querySelector("[data-sub-price]");
+    assert.equal(subPrice.textContent, "$47.98");
+    assert.equal(subPrice.querySelector(".dd-sale"), null);
+    assert.equal(doc.querySelector("[data-sub-was]").textContent, "$59.97");
+    // The one-time row is NOT covered by these rules — it is rewritten
+    // by the app itself (inline black sale + grayish compare + badge).
+    assert.doesNotMatch(
+      style.textContent,
+      /data-purchase-opt="onetime"/,
+    );
+    const oneTime = doc.querySelector(
+      '.purchase-opt[data-purchase-opt="onetime"] .purchase-price',
+    );
+    assert.equal(oneTime.querySelector(".dd-sale").textContent, "$50.97");
+    assert.equal(oneTime.querySelector(".dd-badge").textContent, "Save 15%");
+  } finally {
+    dom.window.close();
+  }
+});
+
+test("v14 landing Subscribe row is recoloured on Enzymes too (dark-green theme)", () => {
+  // Enzymes sets .purchase-price{color:#42572A}, which reads as black —
+  // the v14 rule recolours it to true black like every other page.
+  const dom = runPage(
+    LANDING_SUBSCRIBE_ROW_HTML("#42572A"),
+    "https://biometheory.shop/pages/biome-enzymes",
+    baseSettings(),
+    basePrices(),
+    (window) => {
+      window.document.body.dataset.flavor = "mango";
+      window.GF_PRODUCTS = { mango: { variant: VARIANT } };
+    },
+  );
+  try {
+    const doc = dom.window.document;
+    const style = doc.getElementById("dd-subscribe-price-colors");
+    assert.ok(style, "expected the subscribe-price-colours style element");
+    assert.match(
+      style.textContent,
+      /\.purchase-opt\[data-purchase-opt="subscribe"\] \.purchase-price \[data-sub-price\]\{color:#000000 !important\}/,
+    );
+    assert.equal(doc.querySelector("[data-sub-price]").textContent, "$47.98");
+  } finally {
+    dom.window.close();
+  }
+});
+
+// v14 FIX 2 — final/bottom CTA: the theme rewrites .final-price and
+// .sticky-price with plain text on every toggle and flavour change
+// (syncCtaPrices in the *-base sections), so the app's saved "original"
+// for those spans can itself be the subscribe price. A token equal to
+// the subscribe sale then mapped token-wise back to the subscribe sale
+// even in One-time mode, leaving the final CTA stuck on the subscribe
+// price. The rewrite is now mode-direct: any recognised price token
+// shows the selected mode's sale. This test replays the live sequence
+// with the theme's plain-text writes included.
+const FINAL_CTA_HTML = `
+<div class="shopify-section"><section class="bb gutter" id="buy">
+  <div class="cta-wrap"><span class="pill">Save 20% + Free Shipping</span>
+    <a class="btn" href="#buy">Start With Your Gut — $59.97</a></div>
+  <div class="purchase-opt" data-purchase-opt="onetime">
+    <span class="purchase-price">$59.97</span><span class="save-badge">Save 15%</span>
+  </div>
+  <div class="purchase-opt" data-purchase-opt="subscribe">
+    <span class="purchase-price">$47.98</span><span class="save-badge">Save 20%</span>
+  </div>
+  <button class="btn" type="button" data-add="current">Add to Cart — <span class="sticky-price">$59.97</span></button>
+  <input type="radio" name="gf-purchase" value="onetime">
+  <input type="radio" name="gf-purchase" value="subscribe" checked>
+</section></div>
+<section class="final gutter"><div class="page final-card">
+  <div>
+    <h2>Give Your Gut a Head Start Every Day.</h2>
+    <button class="btn light" type="button" data-add="current">Start With Your Gut — <span class="final-price">$59.97</span></button>
+  </div>
+</div></section>`;
+
+test("v14 final CTA follows the toggle both ways while the theme rewrites its price", async () => {
+  const dom = runPage(
+    FINAL_CTA_HTML,
+    "https://biometheory.shop/pages/biome-gut-first",
+    baseSettings(),
+    basePrices(),
+    (window) => {
+      window.document.body.dataset.flavor = "mango";
+      window.GF_PRODUCTS = { mango: { variant: VARIANT } };
+      // The theme's init ran BEFORE the app loaded and already wrote
+      // the subscribe price into the CTA spans as plain text.
+      window.document.querySelector(".final-price").textContent = "$47.98";
+      window.document.querySelector(".sticky-price").textContent = "$47.98";
+    },
+  );
+  try {
+    const doc = dom.window.document;
+    const finalPrice = () => doc.querySelector(".final-price");
+    const stickyPrice = () => doc.querySelector(".sticky-price");
+    // Subscribe selected on load: both CTAs show the subscribe sale,
+    // even though the theme had already overwritten their originals.
+    await sleep(150);
+    assert.equal(finalPrice().querySelector(".dd-sale").textContent, "$47.98");
+    assert.equal(finalPrice().querySelector(".dd-badge").textContent, "Save 20%");
+    assert.equal(stickyPrice().querySelector(".dd-sale").textContent, "$47.98");
+
+    // Toggle to One-time. The theme's change handler writes the
+    // one-time price as plain text, wiping the app's spans.
+    doc.querySelector('input[name="gf-purchase"][value="onetime"]').checked = true;
+    doc.querySelector('input[name="gf-purchase"][value="subscribe"]').checked = false;
+    doc.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+    finalPrice().textContent = "$50.97";
+    stickyPrice().textContent = "$50.97";
+    await sleep(400);
+    assert.equal(finalPrice().querySelector(".dd-sale").textContent, "$50.97");
+    assert.equal(finalPrice().querySelector(".dd-orig").textContent, "$59.97");
+    assert.equal(finalPrice().querySelector(".dd-badge").textContent, "Save 15%");
+    assert.match(finalPrice().parentNode.textContent, /Start With Your Gut/);
+    assert.equal(stickyPrice().querySelector(".dd-sale").textContent, "$50.97");
+    assert.equal(stickyPrice().querySelector(".dd-badge").textContent, "Save 15%");
+
+    // Toggle back to Subscribe: the theme writes the subscribe price
+    // as plain text again, and the CTAs must return to it.
+    doc.querySelector('input[name="gf-purchase"][value="subscribe"]').checked = true;
+    doc.querySelector('input[name="gf-purchase"][value="onetime"]').checked = false;
+    doc.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+    finalPrice().textContent = "$47.98";
+    stickyPrice().textContent = "$47.98";
+    await sleep(400);
+    assert.equal(finalPrice().querySelector(".dd-sale").textContent, "$47.98");
+    assert.equal(finalPrice().querySelector(".dd-badge").textContent, "Save 20%");
+    assert.equal(stickyPrice().querySelector(".dd-sale").textContent, "$47.98");
+    assert.equal(stickyPrice().querySelector(".dd-badge").textContent, "Save 20%");
+  } finally {
+    dom.window.close();
+  }
+});
+
+// v14 FIX 3 — buy-box section heading: the head_2 theme setting (e.g.
+// "Save 20% + Free Shipping.") is static copy in the buy section's <h2>,
+// not a .pill, so the CTA-pill rewrite never touched it and it stayed on
+// the subscribe % in One-time mode. It now follows the selected mode's
+// % like the burst and pills. Only Gut First, Gut Health 2, Probiotics 2
+// and Taste 2 have a % in their buy heading.
+const HEADING_HTML = `
+<div class="shopify-section"><section class="bb gutter" id="buy">
+  <div class="page">
+    <div class="bb-head center"><h2 class="h-xl">Start With Your Gut. <span class="green">Save 20% + Free Shipping.</span></h2></div>
+    <div class="burst"><span>SAVE<br>20%</span></div>
+    <div class="cta-wrap"><span class="pill">Save 20% + Free Shipping</span>
+      <a class="btn" href="#buy">Start With Your Gut — $59.97</a></div>
+    <div class="purchase-opt" data-purchase-opt="onetime">
+      <span class="purchase-price">$59.97</span>
+    </div>
+    <div class="purchase-opt" data-purchase-opt="subscribe">
+      <span class="purchase-price">$47.98</span>
+    </div>
+  </div>
+  <input type="radio" name="gf-purchase" value="onetime">
+  <input type="radio" name="gf-purchase" value="subscribe" checked>
+</section></div>
+<section><div class="sec-h"><h2 class="h-xl">Gut Support at <span class="green">Every Step of Digestion</span></h2></div></section>`;
+
+test("v14 buy-box heading % follows the purchase-mode toggle", async () => {
+  const dom = runPage(
+    HEADING_HTML,
+    "https://biometheory.shop/pages/biome-gut-first",
+    baseSettings(),
+    basePrices(),
+    (window) => {
+      window.document.body.dataset.flavor = "mango";
+      window.GF_PRODUCTS = { mango: { variant: VARIANT } };
+    },
+  );
+  try {
+    const doc = dom.window.document;
+    const heading = () => doc.querySelector(".bb-head h2");
+    // Subscribe selected on load: heading keeps its subscribe %.
+    assert.match(heading().textContent, /Save 20% \+ Free Shipping\./);
+    // Toggle to One-time: heading follows to the one-time %.
+    doc.querySelector('input[name="gf-purchase"][value="onetime"]').checked = true;
+    doc.querySelector('input[name="gf-purchase"][value="subscribe"]').checked = false;
+    doc.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+    await sleep(200);
+    assert.match(heading().textContent, /Save 15% \+ Free Shipping\./);
+    assert.match(heading().textContent, /Start With Your Gut\./);
+    // Toggle back: heading returns to the subscribe %.
+    doc.querySelector('input[name="gf-purchase"][value="subscribe"]').checked = true;
+    doc.querySelector('input[name="gf-purchase"][value="onetime"]').checked = false;
+    doc.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+    await sleep(200);
+    assert.match(heading().textContent, /Save 20% \+ Free Shipping\./);
+    // A heading with no % is never touched.
+    assert.equal(
+      doc.querySelector(".sec-h h2").textContent,
+      "Gut Support at Every Step of Digestion",
+    );
   } finally {
     dom.window.close();
   }

@@ -116,33 +116,60 @@
   // Selectors are scoped to the SUBSCRIBE row's own wrappers, never to a
   // bare Appstle class — both price classes below also occur in the
   // one-time row's wrapper, which the app rewrites itself:
-  //   - WIDGET_TYPE_2: .appstle_subscription_price_wrapper holds the
-  //     subscribe .appstle_subscription_amount ($47.98) and
-  //     .appstle_subscription_amount_compare_at_price ($59.97). The
-  //     one-time row lives in .appstle_one_time_price_wrapper instead.
+  //   - WIDGET_TYPE_2 (the live store's type, verified against
+  //     Appstle's own appstle-subscription.min.js, v14): the subscribe
+  //     price lives in .appstle_subscription_amount_wrapper, holding
+  //     .appstle_subscription_amount (sale) and
+  //     .appstle_subscription_compare_amount (compare). The v13 rules
+  //     used .appstle_subscription_price_wrapper /
+  //     .appstle_subscription_amount_compare_at_price — NEITHER exists
+  //     anywhere in Appstle's JS (0 occurrences), so the v13 rules
+  //     matched nothing and the row stayed red under Appstle's merchant
+  //     custom CSS (.appstle_subscription_amount { color: #ff0000
+  //     !important; }). ..._compare_at_price is the ONE-TIME wrapper's
+  //     compare class (.appstle_one_time_price_wrapper), so the v13
+  //     compare rule could never have matched the subscribe row either.
+  //     The subscribe row's gap already exists (Appstle's own CSS puts
+  //     margin-left: 6px on the compare span), so this stays colour-only.
   //   - Mustache template: the subscribe spans carry .appstle_price_block
   //     (.appstle_sellingPlan_price / .appstle_sellingPlan_formatted-
   //     CompareAtPrice); the one-time spans never do.
+  //   - Landing pages (native replica buy boxes, no Appstle widget):
+  //     the Subscribe row is
+  //     .purchase-opt[data-purchase-opt="subscribe"] .purchase-price
+  //     with [data-sub-price] / [data-sub-was] spans. The v13 injection
+  //     had no rule for these at all, so they kept the theme's
+  //     .purchase-price colour — #d82c0d red on 7 pages. Enzymes alone
+  //     looked black because its buy section sets
+  //     .purchase-price{color:#42572A} (dark green), not red. The gap
+  //     comes from the theme's flex gap on .purchase-price (4px 10px).
   // The sr-only spans (.appstle_subscription_amount-appstle-sr-only) are
   // different class tokens, so they are not matched by these selectors.
-  // !important is needed because Appstle's own widget CSS colours these
-  // spans; our selectors are more specific than a bare class rule and
-  // this <style> is appended after Appstle's, so it wins ties.
+  // !important is needed because Appstle's own widget CSS and merchant
+  // custom CSS colour these spans; our selectors are more specific than
+  // a bare class rule (two classes vs one) and this <style> is appended
+  // after Appstle's, so it wins ties.
   // If Appstle ever renames these classes, the rule silently stops
   // matching and the row falls back to Appstle's own colours — it can
   // never break a price value.
   function injectSubscribePriceColors() {
     var css =
-      ".appstle_subscription_price_wrapper .appstle_subscription_amount{color:" +
+      ".appstle_subscription_amount_wrapper .appstle_subscription_amount{color:" +
       saleColor +
       " !important}" +
-      ".appstle_subscription_price_wrapper .appstle_subscription_amount_compare_at_price{color:" +
+      ".appstle_subscription_amount_wrapper .appstle_subscription_compare_amount{color:" +
       compareColor +
       " !important}" +
       ".appstle_sellingPlan_price.appstle_price_block{color:" +
       saleColor +
       " !important}" +
       ".appstle_sellingPlan_formattedCompareAtPrice.appstle_price_block{color:" +
+      compareColor +
+      " !important}" +
+      '.purchase-opt[data-purchase-opt="subscribe"] .purchase-price [data-sub-price]{color:' +
+      saleColor +
+      " !important}" +
+      '.purchase-opt[data-purchase-opt="subscribe"] .purchase-price [data-sub-was]{color:' +
       compareColor +
       " !important}";
     var el = document.getElementById("dd-subscribe-price-colors");
@@ -381,21 +408,37 @@
   // one-time original gets the one-time sale, a token equal to the
   // subscribe price gets the subscribe sale. Nothing else is rewritten —
   // other numbers (e.g. "$2.40 a glass") are left alone.
-  // MODE-AWARE (v13): a CTA / section link is a shared display like the
-  // price line, not a per-row price — it shows the price for the
-  // SELECTED purchase mode. So when Subscribe is selected, a token equal
-  // to the one-time original ($59.97) maps to the subscribe sale
-  // ($47.98), not the one-time sale. Without this, hero links such as
-  // Taste 2's "Pick Your Flavor — $50.97" stayed on the one-time price
-  // after toggling to Subscribe.
+  // MODE-AWARE (v13, extended v14): a CTA / section link is a shared
+  // display like the price line, not a per-row price — it shows the
+  // price for the SELECTED purchase mode. So when Subscribe is selected,
+  // a token equal to the one-time original maps to the subscribe sale,
+  // not the one-time sale. Without this, hero links such as Taste 2's
+  // "Pick Your Flavor — $50.97" stayed on the one-time price after
+  // toggling to Subscribe.
+  // MODE-DIRECT (v14): ANY recognised price token (original, one-time
+  // sale, or subscribe sale) maps to the SELECTED mode's sale — the
+  // mode is the source of truth, not the token. Token-based mapping
+  // alone is wrong for .final-price / .sticky-price: the theme rewrites
+  // those spans with plain text on every toggle and flavour change
+  // (syncCtaPrices in the *-base sections), so the app's saved
+  // "original" for them can itself be the subscribe price — and a token
+  // equal to the subscribe sale mapped token-wise re-derives the
+  // subscribe sale even in One-time mode, which is why the final CTA
+  // stayed stuck on the subscribe price after toggling. Unrecognised
+  // numbers (e.g. "$2.40 a glass") are still left alone.
   function staticTargetFor(n, lp, mode) {
-    if (
-      mode === "subscribe" &&
-      lp.sp != null &&
-      Math.abs(n - lp.o) < 0.011
-    ) {
+    var isKnownPrice =
+      Math.abs(n - lp.o) < 0.011 ||
+      Math.abs(n - lp.s) < 0.011 ||
+      (lp.sp != null && Math.abs(n - lp.sp) < 0.011);
+    if (!isKnownPrice) return null;
+    if (mode === "subscribe" && lp.sp != null) {
       return { sale: lp.sp, pct: lp.spp || 0 };
     }
+    if (mode === "onetime") {
+      return { sale: lp.s, pct: lp.op || Math.round((1 - lp.s / lp.o) * 100) };
+    }
+    // No mode readable: fall back to the token's own sale.
     if (Math.abs(n - lp.o) < 0.011) {
       return { sale: lp.s, pct: lp.op || Math.round((1 - lp.s / lp.o) * 100) };
     }
@@ -974,6 +1017,20 @@
           burstPct,
         );
       }
+      // Buy-box section heading (v14): the head_2 theme setting (e.g.
+      // "Save 20% + Free Shipping.") is static copy in the buy section's
+      // <h2>, not a .pill, so the CTA-pill rewrite above never touches
+      // it and it stayed on the subscribe % in One-time mode (Gut First,
+      // Gut Health 2, Probiotics 2, Taste 2 — the only four pages whose
+      // buy heading carries a %). Scoped to the buy section (#buy) and
+      // to the heading's own span; setPctInElements only writes when a
+      // % is actually present, so headings without one — and the other
+      // four pages' buy headings — are untouched. The % comes from the
+      // synced data (the selected mode's %), never typed in.
+      setPctInElements(
+        "#buy .bb-head h2 span, #buy .sec-h h2 span",
+        burstPct,
+      );
     }
     // Each row's Save pill shows its own mode's dynamic %. (The one-time
     // row is usually already rewritten by the app into its own badge, in
